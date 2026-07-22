@@ -1,16 +1,19 @@
 import json
+import base64
 from datetime import date
-from openai import AsyncOpenAI
+from google import genai
+from google.genai import types
 from app.config import settings
 
 class OCRService:
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY) if settings.OPENAI_API_KEY else None
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
 
     async def extract_receipt_from_image_base64(self, image_base64: str) -> dict:
-        """Usa OpenAI GPT-4o-mini Vision para ler cupons fiscais, recibos e notas fiscais."""
+        """Usa Gemini 2.5 Flash Vision para ler cupons fiscais, recibos e notas fiscais."""
         if not self.client:
-            # Fallback para testes se OPENAI_API_KEY não estiver preenchida no .env
+            # Fallback para testes se GEMINI_API_KEY não estiver preenchida
+            print("[OCR] GEMINI_API_KEY não configurada. Usando fallback.")
             return {
                 "merchant_name": "Posto Shell Marginal (Teste)",
                 "merchant_cnpj": "12.345.678/0001-90",
@@ -32,24 +35,20 @@ class OCRService:
         Retorne APENAS o JSON estrito, sem explicações adicionais ou marcações markdown.
         """
 
-        response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                        }
-                    ]
-                }
-            ],
-            max_tokens=350
-        )
+        try:
+            image_bytes = base64.b64decode(image_base64)
+            response = await self.client.aio.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+                ]
+            )
+            content = response.text
+        except Exception as e:
+            print(f"[OCR Error] Falha na chamada ao Gemini: {e}")
+            raise ValueError(f"Não foi possível processar a imagem com IA: {e}")
 
-        content = response.choices[0].message.content
         if not content:
             raise ValueError("Resposta vazia da IA.")
             
