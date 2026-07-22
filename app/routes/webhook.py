@@ -275,9 +275,9 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                 user.onboarding_step = None
                 await db.commit()
 
-                # Notifica o Gestor no WhatsApp com atalhos 01 e 02
+                # Notifica o Gestor no WhatsApp
                 admin_alert = (
-                    f"👤 *[Solicitação de Cadastro - ZapReembolso]*\n"
+                    f"👤 *Solicitação de Cadastro - ZapReembolso*\n"
                     f"Um novo funcionário solicitou vínculo à sua empresa:\n\n"
                     f"👤 *Nome:* {user.name}\n"
                     f"📧 *E-mail:* {user.email or 'Não informado'}\n"
@@ -286,8 +286,8 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                     f"📱 *WhatsApp:* {user.phone}\n\n"
                     f"----------------------------------\n"
                     f"Responda este chat para autorizar:\n"
-                    f"01 - ✅ *ACEITAR {user.phone}*\n"
-                    f"02 - ❌ *RECUSAR {user.phone}*"
+                    f"1 - ✅ *ACEITAR*\n"
+                    f"2 - ❌ *RECUSAR*"
                 )
                 await wuzapi_client.send_text_message(target_company.admin_phone, admin_alert)
 
