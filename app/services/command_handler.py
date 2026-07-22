@@ -217,6 +217,60 @@ class CommandHandler:
         await wuzapi_client.send_text_message(phone, ranking_msg)
         return {"status": "ok"}
 
+    async def handle_exportar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        if user.role != UserRole.ADMIN:
+            await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem exportar relatórios.")
+            return {"status": "ok"}
+            
+        today = date.today()
+        exp_query = select(Expense).where(
+            Expense.company_id == company.id,
+            Expense.expense_date >= today.replace(day=1)
+        )
+        exp_res = await db.execute(exp_query)
+        all_expenses = exp_res.scalars().all()
+
+        if not all_expenses:
+            await wuzapi_client.send_text_message(phone, "ℹ️ Nenhuma despesa registrada neste mês para exportar.")
+            return {"status": "ok"}
+
+        # Gerar CSV
+        import csv
+        import io
+        import base64
+        
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=';')
+        writer.writerow(['ID', 'Data', 'Funcionario', 'Categoria', 'Estabelecimento', 'CNPJ', 'Valor', 'Status'])
+
+        for e in all_expenses:
+            cat_name = e.category.value if hasattr(e.category, 'value') else str(e.category)
+            status_name = e.status.value if hasattr(e.status, 'value') else str(e.status)
+            writer.writerow([
+                e.id[:8],
+                e.expense_date.strftime("%d/%m/%Y"),
+                e.user_phone,
+                cat_name,
+                e.merchant_name or '',
+                e.merchant_cnpj or '',
+                f"{e.amount:.2f}".replace('.', ','),
+                status_name
+            ])
+
+        csv_content = output.getvalue().encode('utf-8')
+        b64_csv = base64.b64encode(csv_content).decode('utf-8')
+        filename = f"Relatorio_Despesas_{company.name.replace(' ', '_')}_{today.strftime('%Y_%m')}.csv"
+
+        caption = f"📊 *Relatório Exportado com Sucesso!*\n\nEmpresa: {company.name}\nPeríodo: Mês {today.strftime('%m/%Y')}\nTotal de Lançamentos: {len(all_expenses)}\n\nO arquivo CSV está anexado acima e pode ser aberto no Excel."
+        
+        await wuzapi_client.send_document_message(
+            phone=phone,
+            document_base64=b64_csv,
+            filename=filename,
+            caption=caption
+        )
+        return {"status": "ok"}
+
     async def handle_aprovar_rejeitar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aprovar ou rejeitar despesas.")

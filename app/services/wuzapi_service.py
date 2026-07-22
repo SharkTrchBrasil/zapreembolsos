@@ -74,6 +74,23 @@ class WuzAPIService:
                 print(f"[WuzAPI Error] Falha ao enviar typing_indicator para {phone}: {e}")
                 return False
 
+    async def send_document_message(self, phone: str, document_base64: str, filename: str, caption: str = "") -> bool:
+        """Envia um arquivo (PDF/CSV) em base64 pelo WuzAPI."""
+        url = f"{self.base_url}/chat/send/document"
+        payload = {
+            "Phone": phone,
+            "Document": f"data:application/octet-stream;base64,{document_base64}",
+            "FileName": filename,
+            "Caption": caption
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, json=payload, headers=self.headers, timeout=30.0)
+                return response.status_code in [200, 201]
+            except Exception as e:
+                print(f"[WuzAPI ERROR] Falha ao enviar documento para {phone}: {e}")
+                return False
+
     async def download_media(self, url: str, media_key_b64: str, media_type: str = "Image") -> bytes:
         """Faz o download da mídia criptografada da CDN do WhatsApp e a decripta."""
         try:
