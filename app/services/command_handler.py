@@ -83,12 +83,73 @@ class CommandHandler:
             return {"status": "ok"}
 
         today = date.today()
-        exp_query = select(Expense).where(
-            Expense.company_id == company.id,
-            Expense.expense_date >= today.replace(day=1)
-        )
+        raw_lower = clean_text.lower().strip()
+
+        # 1. Caso o usuário peça especificamente o Ranking ("quem mais gastou")
+        if any(w in raw_lower for w in ["ranking", "quem mais gastou", "top"]):
+            return await self.handle_ranking(phone, company, db)
+
+        # 2. Tenta extração NLU se houver texto livre além da palavra "RELATORIO"
+        from app.services.nlu_service import nlu_service
+        nlu = await nlu_service.parse_expense_query(clean_text)
+
+        # Se for ação de Ranking via NLU
+        if nlu.get("action") == "RANKING":
+            return await self.handle_ranking(phone, company, db)
+
+        # 3. Montagem de Filtros no Banco de Dados
+        exp_query = select(Expense).where(Expense.company_id == company.id)
+
+        # Filtro de Pessoa (Funcionário Específico)
+        target_person_name = nlu.get("person_name")
+        if target_person_name:
+            user_subquery = select(User.phone).where(
+                User.company_id == company.id,
+                User.name.ilike(f"%{target_person_name}%")
+            )
+            user_phones_res = await db.execute(user_subquery)
+            phones_list = user_phones_res.scalars().all()
+            if phones_list:
+                exp_query = exp_query.where(Expense.user_phone.in_(phones_list))
+            else:
+                await wuzapi_client.send_text_message(
+                    phone, 
+                    f"⚠️ Nenhum funcionário ativo encontrado com o nome *{target_person_name}*."
+                )
+                return {"status": "ok"}
+
+        # Filtro de Categoria
+        if nlu.get("category"):
+            try:
+                cat_enum = ExpenseCategory[nlu["category"]]
+                exp_query = exp_query.where(Expense.category == cat_enum)
+            except KeyError:
+                pass
+
+        # Filtro de Data (Padrão: mês atual se não informado range)
+        if nlu.get("start_date") and nlu.get("end_date"):
+            try:
+                s_date = datetime.strptime(nlu["start_date"], "%Y-%m-%d").date()
+                e_date = datetime.strptime(nlu["end_date"], "%Y-%m-%d").date()
+                exp_query = exp_query.where(Expense.expense_date >= s_date, Expense.expense_date <= e_date)
+                period_str = f"{s_date.strftime('%d/%m/%Y')} até {e_date.strftime('%d/%m/%Y')}"
+            except Exception:
+                exp_query = exp_query.where(Expense.expense_date >= today.replace(day=1))
+                period_str = f"Mês Atual ({today.strftime('%m/%Y')})"
+        else:
+            exp_query = exp_query.where(Expense.expense_date >= today.replace(day=1))
+            period_str = f"Mês Atual ({today.strftime('%m/%Y')})"
+
         exp_res = await db.execute(exp_query)
         all_expenses = exp_res.scalars().all()
+
+        if not all_expenses:
+            person_note = f" de *{target_person_name}*" if target_person_name else ""
+            await wuzapi_client.send_text_message(
+                phone, 
+                f"ℹ️ Nenhuma despesa registrada{person_note} no período (*{period_str}*)."
+            )
+            return {"status": "ok"}
 
         total_amount = sum(e.amount for e in all_expenses)
         pending_expenses = [e for e in all_expenses if e.status == ExpenseStatus.PENDING]
@@ -99,23 +160,61 @@ class CommandHandler:
             cat_name = e.category.value if hasattr(e.category, 'value') else str(e.category)
             by_category[cat_name] = by_category.get(cat_name, 0.0) + float(e.amount)
 
-        cat_summary = "\n".join([f"• **{cat}:** R$ {amt:.2f}" for cat, amt in by_category.items()]) or "Nenhuma despesa"
+        cat_summary = "\n".join([f"• *{cat}:* R$ {amt:.2f}" for cat, amt in by_category.items()]) or "Nenhuma despesa"
+        title_person = f" - {target_person_name}" if target_person_name else ""
 
         report_msg = (
-            f"📊 **Resumo de Despesas - Mês Atual ({today.strftime('%m/%Y')})**\n\n"
-            f"💰 **Total Acumulado:** R$ {total_amount:.2f} ({len(all_expenses)} comprovantes)\n"
-            f"✅ **Aprovadas:** R$ {sum(e.amount for e in approved_expenses):.2f}\n"
-            f"⏳ **Pendentes de Aprovação:** {len(pending_expenses)} (R$ {sum(e.amount for e in pending_expenses):.2f})\n\n"
-            f"🏷️ **Por Categoria:**\n{cat_summary}\n\n"
+            f"📊 *Relatório de Despesas{title_person} ({period_str})*\n\n"
+            f"💰 *Total Acumulado:* R$ {total_amount:.2f} ({len(all_expenses)} comprovantes)\n"
+            f"✅ *Aprovadas:* R$ {sum(e.amount for e in approved_expenses):.2f}\n"
+            f"⏳ *Pendentes:* {len(pending_expenses)} (R$ {sum(e.amount for e in pending_expenses):.2f})\n\n"
+            f"🏷️ *Por Categoria:*\n{cat_summary}\n"
         )
         
         if pending_expenses and user.role == UserRole.ADMIN:
-            report_msg += "📋 **Pendentes:**\n"
-            for p in pending_expenses:
-                report_msg += f"- [{p.id[:4]}] {p.merchant_name} (R$ {p.amount:.2f})\n"
-            report_msg += "\n💡 Responda *APROVAR [ID]* ou *REJEITAR [ID]*."
+            report_msg += "\n📋 *Despesas Pendentes de Aprovação:*\n"
+            for p in pending_expenses[:5]:
+                report_msg += f"• [{p.id[:4]}] {p.merchant_name} (R$ {p.amount:.2f})\n"
+            report_msg += "\n💡 *Para aprovar:* responda *1* ou *APROVAR [ID]*."
 
         await wuzapi_client.send_text_message(phone, report_msg)
+        return {"status": "ok"}
+
+    async def handle_ranking(self, phone: str, company: Company, db: AsyncSession) -> dict:
+        """Gera o ranking dos funcionários que mais gastaram no mês corrente."""
+        today = date.today()
+        exp_query = select(Expense).where(
+            Expense.company_id == company.id,
+            Expense.expense_date >= today.replace(day=1)
+        )
+        exp_res = await db.execute(exp_query)
+        all_expenses = exp_res.scalars().all()
+
+        if not all_expenses:
+            await wuzapi_client.send_text_message(phone, "ℹ️ Nenhuma despesa registrada neste mês para gerar ranking.")
+            return {"status": "ok"}
+
+        user_totals = {}
+        for e in all_expenses:
+            user_totals[e.user_phone] = user_totals.get(e.user_phone, 0.0) + float(e.amount)
+
+        # Ordena do maior para o menor
+        sorted_users = sorted(user_totals.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        # Busca os nomes dos usuários
+        ranking_msg = f"🏆 *Ranking de Maiores Gastos do Mês ({today.strftime('%m/%Y')})*\n\n"
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+
+        for idx, (u_phone, total) in enumerate(sorted_users):
+            u_query = select(User).where(User.phone == u_phone)
+            u_res = await db.execute(u_query)
+            u_obj = u_res.scalars().first()
+            u_name = u_obj.name if (u_obj and u_obj.name) else u_phone
+            u_dept = f" ({u_obj.department})" if (u_obj and u_obj.department) else ""
+            ranking_msg += f"{medals[idx]} *{u_name}*{u_dept}: R$ {total:.2f}\n"
+
+        ranking_msg += f"\n💡 *Total da equipe no mês:* R$ {sum(user_totals.values()):.2f}"
+        await wuzapi_client.send_text_message(phone, ranking_msg)
         return {"status": "ok"}
 
     async def handle_aprovar_rejeitar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:

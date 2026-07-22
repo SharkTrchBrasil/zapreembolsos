@@ -7,7 +7,7 @@ from app.config import settings
 import app.models
 from app.database import init_db
 from app.routes import webhook
-from app.services.notification_service import run_daily_reminder_job
+from app.services.notification_service import run_daily_reminder_job, run_daily_billing_job
 
 scheduler = AsyncIOScheduler()
 
@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
 
     try:
         scheduler.add_job(run_daily_reminder_job, 'cron', hour=8, minute=0)
+        scheduler.add_job(run_daily_billing_job, 'cron', hour=9, minute=0)
         scheduler.start()
         print("🚀 ZapReembolso API iniciada e Scheduler ativo!")
     except Exception as e:

@@ -184,7 +184,7 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             
             menu_msg = (
                 f"Muito obrigado, *{user.name}*! Como posso te ajudar hoje?\n\n"
-                f"1️⃣ *Quero cadastrar minha Empresa / Prefeitura* (Sou Gestor)\n"
+                f"1️⃣ *Quero cadastrar minha Empresa / Órgão* (Sou Gestor)\n"
                 f"2️⃣ *Quero me vincular à uma empresa* (Sou Funcionário)\n"
                 f"3️⃣ *Preciso de ajuda ou suporte*\n\n"
                 f"Digite *1*, *2* ou *3* para escolher:"
@@ -379,20 +379,56 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             size_val = type_map.get(clean_text.strip(), clean_text.strip())
             if comp:
                 comp.estimated_employees = size_val
+            user.onboarding_step = "COMP_PLAN"
+            await db.commit()
+
+            plan_menu = (
+                "🚀 *Escolha seu Plano de Teste (30 Dias Grátis - Sem Cartão)*\n\n"
+                "Sua empresa terá 30 dias de acesso total e ilimitado para testar com a equipe!\n\n"
+                "1️⃣ *Plano Starter* (Até 10 funcionários) — _R$ 99,00/mês pós teste_\n"
+                "2️⃣ *Plano Pro* (Até 50 funcionários + Relatórios) — _R$ 299,00/mês pós teste_\n"
+                "3️⃣ *Plano Enterprise* (50+ funcionários + Suporte) — _R$ 699,00/mês pós teste_\n\n"
+                "Digite *1*, *2* ou *3* para ativar seus 30 dias grátis:"
+            )
+            await wuzapi_client.send_text_message(phone, plan_menu)
+            return {"status": "ok"}
+
+        elif user.onboarding_step == "COMP_PLAN":
+            plan_choice = clean_text.strip()
+            price = 99.0
+            plan_name = "Starter (Até 10 funcionários)"
+            
+            if plan_choice in ["2", "pro"]:
+                price = 299.0
+                plan_name = "Pro (Até 50 funcionários)"
+            elif plan_choice in ["3", "enterprise"]:
+                price = 699.0
+                plan_name = "Enterprise (50+ funcionários)"
+
+            trial_expiration = datetime.now(timezone.utc) + timedelta(days=30)
+            
+            if comp:
+                comp.trial_ends_at = trial_expiration
+                comp.subscription_status = "TRIAL"
+                comp.monthly_price = price
+                comp.plan = PlanType.FREE_TRIAL
+
             user.onboarding_step = None
             await db.commit()
 
             code = comp.code if comp else "N/A"
             c_name = comp.name if comp else "Sua Empresa"
+            exp_date_str = trial_expiration.strftime("%d/%m/%Y")
 
             welcome_admin = (
-                f"🎉 *Cadastro da Empresa {c_name} Concluído con Sucesso!*\n\n"
+                f"🎉 *Cadastro da Empresa {c_name} Concluído com Sucesso!*\n\n"
                 f"🏢 *Empresa:* {c_name}\n"
                 f"📄 *CNPJ:* {comp.cnpj if comp else 'Não informado'}\n"
                 f"🔑 *Código da Empresa:* `#{code}`\n"
                 f"👤 *Gestor Responsável:* {user.name}\n"
                 f"📧 *E-mail:* {user.email or 'Não informado'}\n"
-                f"👥 *Porte:* {size_val}\n\n"
+                f"🎁 *Plano Escolhido:* {plan_name}\n"
+                f"⏳ *Período de Teste:* 30 Dias Grátis (Válido até {exp_date_str})\n\n"
                 f"📢 *Como adicionar funcionários:*\n"
                 f"Passe o código `#{code}` para seus funcionários ou peça para eles enviarem o seu telefone no primeiro acesso!\n\n"
                 f"💡 *Seus Comandos de Gestor:*\n"
@@ -493,6 +529,39 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     comp_query = select(Company).where(Company.id == user.company_id)
     comp_res = await db.execute(comp_query)
     company = comp_res.scalar_one_or_none()
+
+    # Verificação de Vencimento do Plano de Teste / Assinatura
+    if company and company.trial_ends_at:
+        now_utc = datetime.now(timezone.utc)
+        if company.trial_ends_at <= now_utc and company.subscription_status != "ACTIVE":
+            company.subscription_status = "EXPIRED"
+            await db.commit()
+
+    if company and company.subscription_status == "EXPIRED":
+        if user.role == UserRole.EMPLOYEE:
+            await wuzapi_client.send_text_message(
+                phone,
+                f"⚠️ *Serviço Pausado Temporariamente*\n\n"
+                f"A assinatura da empresa *{company.name}* está pendente de renovação com o gestor.\n"
+                f"Por favor, peça ao seu gestor para realizar a renovação via Pix pelo WhatsApp para liberar o envio de comprovantes!"
+            )
+            return {"status": "ok"}
+        elif user.role == UserRole.ADMIN:
+            from app.services.efi_service import efi_pay_service
+            pix_data = await efi_pay_service.create_pix_cob(
+                company_name=company.name,
+                cnpj_or_cpf=company.cnpj or "00000000000000",
+                amount=float(company.monthly_price or 99.0)
+            )
+            billing_msg = efi_pay_service.format_pix_whatsapp_message(
+                company_name=company.name,
+                plan_name=company.estimated_employees or "Plano Corporativo",
+                amount=float(company.monthly_price or 99.0),
+                pix_data=pix_data,
+                is_expired=True
+            )
+            await wuzapi_client.send_text_message(phone, billing_msg)
+            return {"status": "ok"}
 
     # Comandos de lançamento manual (Despesa sem recibo e KM)
     if clean_text.upper().startswith("DESPESA"):

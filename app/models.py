@@ -40,6 +40,9 @@ class Company(Base):
     billing_email: Mapped[str | None] = mapped_column(String(100), nullable=True)
     onboarding_step: Mapped[str | None] = mapped_column(String(50), nullable=True)
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(30), default="TRIAL") # TRIAL, ACTIVE, EXPIRED
+    monthly_price: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     km_rate: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

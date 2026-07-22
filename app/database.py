@@ -38,6 +38,9 @@ async def init_db():
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(100);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(50);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS km_rate NUMERIC(10, 2);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) DEFAULT 'TRIAL';",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS monthly_price NUMERIC(10, 2);",
 
             # Tabela expenses
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS image_s3_key VARCHAR(255);",

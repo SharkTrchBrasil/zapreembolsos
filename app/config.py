@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     AWS_S3_BUCKET: str = "zap-reembolsos"
 
+    EFI_CLIENT_ID: str = ""
+    EFI_CLIENT_SECRET: str = ""
+    EFI_CERTIFICATE_PATH: str = ""
+    EFI_PIX_KEY: str = "comercial@zapreembolso.com.br"
+
     class Config:
         env_file = ".env"
         extra = "ignore"
