@@ -1,26 +1,26 @@
 import logging
 from typing import Optional
-from openai import AsyncOpenAI
+import google.generativeai as genai
 from app.config import settings
 
 logger = logging.getLogger("chatbot_service")
 
 class ChatbotService:
     def __init__(self):
-        self.api_key = settings.OPENAI_API_KEY
-        self.client = None
+        self.api_key = settings.GEMINI_API_KEY
+        self.model = None
         self.client_ready = False
         self._setup_client()
 
     def _setup_client(self):
         if not self.api_key:
-            logger.warning("[Chatbot] OPENAI_API_KEY não configurada. IA desabilitada.")
+            logger.warning("[Chatbot] GEMINI_API_KEY não configurada. IA desabilitada.")
             return
 
         try:
-            self.client = AsyncOpenAI(api_key=self.api_key)
+            genai.configure(api_key=self.api_key)
             
-            self.system_instruction = """
+            system_instruction = """
 Você é o assistente virtual executivo do ZapReembolso.
 O usuário enviou uma mensagem de texto com uma dúvida ou saudação.
 
@@ -31,27 +31,34 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
 4. Se perguntarem sobre relatórios ou aprovações, diga que as funções (RELATORIO, APROVAR) são exclusivas para gestores.
 5. Nunca invente dados ou regras adicionais.
 """
+            # Utilizando gemini-2.0-flash (ou gemini-1.5-flash) para respostas rápidas de texto e visão
+            self.model = genai.GenerativeModel(
+                model_name="gemini-2.0-flash",
+                system_instruction=system_instruction
+            )
             self.client_ready = True
         except Exception as e:
-            logger.error(f"[Chatbot] Erro ao inicializar OpenAI: {e}")
+            logger.error(f"[Chatbot] Erro ao inicializar Gemini: {e}")
 
     async def generate_response(self, text: str) -> str:
         if not self.client_ready:
             return "Olá. Para registrar uma despesa, envie a foto do cupom fiscal ou recibo."
             
         try:
-            response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": self.system_instruction},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.2, # Super baixo para ser direto e sem enrolação
-                max_tokens=150
+            # temperature baixa para ser direto e sem enrolação
+            generation_config = genai.GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=150
             )
-            return response.choices[0].message.content.strip()
+            
+            # Usando generate_content_async para não travar o event loop do FastAPI
+            response = await self.model.generate_content_async(
+                text,
+                generation_config=generation_config
+            )
+            return response.text.strip()
         except Exception as e:
-            logger.error(f"[Chatbot] Falha ao gerar resposta (OpenAI): {e}")
+            logger.error(f"[Chatbot] Falha ao gerar resposta (Gemini): {e}")
             return "Desculpe, erro técnico. Para solicitar reembolso, envie a foto do recibo."
 
 chatbot_service = ChatbotService()

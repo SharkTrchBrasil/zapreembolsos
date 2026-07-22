@@ -17,22 +17,60 @@ router = APIRouter(prefix="/webhook", tags=["Webhook"])
 @router.post("/wuzapi")
 async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
     """Recebe mensagens do WuzAPI e orquestra o onboarding e gestão de comprovantes."""
-    if token != settings.WEBHOOK_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized webhook token")
+    # Se houver um WEBHOOK_SECRET definido nas variáveis (que não o padrão), exigimos o token.
+    if settings.WEBHOOK_SECRET and settings.WEBHOOK_SECRET != "change_me_in_production":
+        if token != settings.WEBHOOK_SECRET:
+            raise HTTPException(status_code=401, detail="Unauthorized webhook token")
 
     try:
         data = await request.json()
+        print("\n\n=== WEBHOOK PAYLOAD RECEBIDO ===")
+        print(data)
+        print("================================\n\n")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    phone = data.get("Phone") or data.get("from")
-    text = data.get("Body") or data.get("text", "")
-    image_base64 = data.get("ImageBase64") or data.get("media_base64")
+    phone = None
+    text = ""
+    image_base64 = None
+
+    # O WuzAPI normalmente envia uma lista de eventos ou um dicionário estruturado.
+    # Vamos tentar extrair os dados de algumas estruturas comuns:
+    if isinstance(data, list) and len(data) > 0:
+        event = data[0]
+    else:
+        event = data
+
+    if isinstance(event, dict):
+        # Padrão genérico/antigo WuzAPI ou Z-API / Evolution
+        phone = event.get("Phone") or event.get("from")
+        text = event.get("Body") or event.get("text", "")
+        image_base64 = event.get("ImageBase64") or event.get("media_base64")
+        
+        # Padrão nativo Baileys (WuzAPI events)
+        if "data" in event and isinstance(event["data"], dict):
+            msg_data = event["data"]
+            # Extraindo número
+            if "key" in msg_data and "remoteJid" in msg_data["key"]:
+                phone = msg_data["key"]["remoteJid"].split("@")[0]
+            elif "pushName" in msg_data: # Fallback genérico
+                phone = event.get("instanceId") # Só para ter um fallback, ideal é remoteJid
+
+            # Extraindo texto
+            if "message" in msg_data:
+                msg = msg_data["message"]
+                if "conversation" in msg:
+                    text = msg["conversation"]
+                elif "extendedTextMessage" in msg and "text" in msg["extendedTextMessage"]:
+                    text = msg["extendedTextMessage"]["text"]
+                elif "imageMessage" in msg and "caption" in msg["imageMessage"]:
+                    text = msg["imageMessage"]["caption"]
 
     if not phone:
+        print("⚠️ Nenhuma mensagem ou número de telefone extraído. Ignorando evento.")
         return {"status": "ignored", "reason": "No phone number"}
 
-    phone = phone.replace("@s.whatsapp.net", "").replace("+", "").strip()
+    phone = str(phone).replace("@s.whatsapp.net", "").replace("+", "").strip()
     clean_text = text.strip() if text else ""
 
     # 1. Busca ou cria o registro inicial do Usuário
