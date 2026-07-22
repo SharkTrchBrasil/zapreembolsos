@@ -35,19 +35,31 @@ class OCRService:
         Retorne APENAS o JSON estrito, sem explicações adicionais ou marcações markdown.
         """
 
-        try:
-            image_bytes = base64.b64decode(image_base64)
-            response = await self.client.aio.models.generate_content(
-                model='gemini-3.5-flash',
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-                ]
-            )
-            content = response.text
-        except Exception as e:
-            print(f"[OCR Error] Falha na chamada ao Gemini: {e}")
-            raise ValueError(f"Não foi possível processar a imagem com IA: {e}")
+        image_bytes = base64.b64decode(image_base64)
+        models_to_try = ["gemini-2.0-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+        content = None
+        last_error = None
+
+        for model_name in models_to_try:
+            try:
+                print(f"[OCR] Tentando extração com modelo {model_name}...")
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        prompt,
+                        types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+                    ]
+                )
+                content = response.text
+                if content:
+                    print(f"[OCR] Sucesso com o modelo {model_name}!")
+                    break
+            except Exception as e:
+                print(f"[OCR Warning] Falha no modelo {model_name}: {e}")
+                last_error = e
+
+        if not content:
+            raise ValueError(f"Não foi possível processar a imagem com IA: {last_error}")
 
         if not content:
             raise ValueError("Resposta vazia da IA.")
