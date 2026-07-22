@@ -1,4 +1,5 @@
 import uuid
+import json
 import random
 from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,16 +18,13 @@ router = APIRouter(prefix="/webhook", tags=["Webhook"])
 @router.post("/wuzapi")
 async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
     """Recebe mensagens do WuzAPI e orquestra o onboarding e gestão de comprovantes."""
-    # Se houver um WEBHOOK_SECRET definido nas variáveis (que não o padrão), exigimos o token.
+    # Validação do token de segurança
     if settings.WEBHOOK_SECRET and settings.WEBHOOK_SECRET != "change_me_in_production":
         if token != settings.WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="Unauthorized webhook token")
 
     try:
         data = await request.json()
-        print("\n\n=== WEBHOOK PAYLOAD RECEBIDO ===")
-        print(data)
-        print("================================\n\n")
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
@@ -34,41 +32,67 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     text = ""
     image_base64 = None
 
-    # O WuzAPI normalmente envia uma lista de eventos ou um dicionário estruturado.
-    # Vamos tentar extrair os dados de algumas estruturas comuns:
-    if isinstance(data, list) and len(data) > 0:
-        event = data[0]
+    # ========================================================
+    # PARSING DO PAYLOAD DO WUZAPI
+    # O WuzAPI envia: {"instanceName": "...", "jsonData": "<JSON stringificado>"}
+    # Dentro de jsonData temos: {"event": {...}, "type": "Message"}
+    # ========================================================
+
+    json_data_str = data.get("jsonData")
+
+    if json_data_str and isinstance(json_data_str, str):
+        # Parseia o JSON interno (jsonData é uma string, não um objeto)
+        try:
+            inner = json.loads(json_data_str)
+        except json.JSONDecodeError:
+            print(f"⚠️ Falha ao parsear jsonData: {json_data_str[:200]}")
+            return {"status": "ignored", "reason": "Invalid jsonData"}
+
+        event_type = inner.get("type", "")
+
+        # Ignora eventos que NÃO são mensagens (ex: ChatPresence, Receipt, etc.)
+        if event_type != "Message":
+            return {"status": "ignored", "reason": f"Event type '{event_type}' ignored"}
+
+        event = inner.get("event", {})
+        info = event.get("Info", {})
+        message = event.get("Message", {})
+
+        # --- Extraindo o número de telefone ---
+        # SenderAlt tem o formato: 5533XXXXXXXX@s.whatsapp.net (número real)
+        # Sender/Chat podem ter formato LID (271459817656435@lid) que não é útil
+        sender_alt = info.get("SenderAlt", "")
+        if sender_alt and "@s.whatsapp.net" in sender_alt:
+            phone = sender_alt.split("@")[0].split(":")[0]
+        else:
+            # Fallback: tenta o Chat ou Sender removendo o sufixo
+            raw = info.get("Chat", "") or info.get("Sender", "")
+            if "@s.whatsapp.net" in raw:
+                phone = raw.split("@")[0].split(":")[0]
+
+        # Ignora mensagens enviadas por nós mesmos (IsFromMe)
+        if info.get("IsFromMe", False):
+            return {"status": "ignored", "reason": "Message from self"}
+
+        # --- Extraindo o texto ---
+        if "conversation" in message:
+            text = message["conversation"]
+        elif "extendedTextMessage" in message:
+            text = message["extendedTextMessage"].get("text", "")
+        elif "imageMessage" in message:
+            text = message["imageMessage"].get("caption", "")
+            # TODO: Extrair imagem base64 quando WuzAPI suportar
+
+        print(f"📩 Mensagem recebida | Phone: {phone} | Texto: '{text}' | PushName: {info.get('PushName', 'N/A')}")
+
     else:
-        event = data
-
-    if isinstance(event, dict):
-        # Padrão genérico/antigo WuzAPI ou Z-API / Evolution
-        phone = event.get("Phone") or event.get("from")
-        text = event.get("Body") or event.get("text", "")
-        image_base64 = event.get("ImageBase64") or event.get("media_base64")
-        
-        # Padrão nativo Baileys (WuzAPI events)
-        if "data" in event and isinstance(event["data"], dict):
-            msg_data = event["data"]
-            # Extraindo número
-            if "key" in msg_data and "remoteJid" in msg_data["key"]:
-                phone = msg_data["key"]["remoteJid"].split("@")[0]
-            elif "pushName" in msg_data: # Fallback genérico
-                phone = event.get("instanceId") # Só para ter um fallback, ideal é remoteJid
-
-            # Extraindo texto
-            if "message" in msg_data:
-                msg = msg_data["message"]
-                if "conversation" in msg:
-                    text = msg["conversation"]
-                elif "extendedTextMessage" in msg and "text" in msg["extendedTextMessage"]:
-                    text = msg["extendedTextMessage"]["text"]
-                elif "imageMessage" in msg and "caption" in msg["imageMessage"]:
-                    text = msg["imageMessage"]["caption"]
+        # Fallback: formato genérico (caso o WuzAPI mude ou outro provedor)
+        phone = data.get("Phone") or data.get("from")
+        text = data.get("Body") or data.get("text", "")
+        image_base64 = data.get("ImageBase64") or data.get("media_base64")
 
     if not phone:
-        print("⚠️ Nenhuma mensagem ou número de telefone extraído. Ignorando evento.")
-        return {"status": "ignored", "reason": "No phone number"}
+        return {"status": "ignored", "reason": "No phone number extracted"}
 
     phone = str(phone).replace("@s.whatsapp.net", "").replace("+", "").strip()
     clean_text = text.strip() if text else ""
