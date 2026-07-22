@@ -1,4 +1,9 @@
 import httpx
+import base64
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.backends import default_backend
 from app.config import settings
 
 class WuzAPIService:
@@ -45,5 +50,40 @@ class WuzAPIService:
             except Exception as e:
                 print(f"[WuzAPI Error] Falha ao enviar typing_indicator para {phone}: {e}")
                 return False
+
+    async def download_media(self, url: str, media_key_b64: str, media_type: str = "Image") -> bytes:
+        """Faz o download da mídia criptografada da CDN do WhatsApp e a decripta."""
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(url, timeout=15.0)
+                r.raise_for_status()
+                encrypted_data = r.content
+
+            media_key = base64.b64decode(media_key_b64)
+            app_info = f"WhatsApp {media_type} Keys".encode()
+            
+            hkdf = HKDF(
+                algorithm=hashes.SHA256(),
+                length=112,
+                salt=None,
+                info=app_info,
+                backend=default_backend()
+            )
+            expanded_key = hkdf.derive(media_key)
+            
+            iv = expanded_key[0:16]
+            cipher_key = expanded_key[16:48]
+            
+            # Formato dos dados: [conteúdo criptografado][10-byte MAC]
+            encrypted_content = encrypted_data[:-10]
+            
+            cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            decrypted_data = decryptor.update(encrypted_content) + decryptor.finalize()
+            
+            return decrypted_data
+        except Exception as e:
+            print(f"[WuzAPI ERROR] Falha ao baixar e decriptar mídia: {e}")
+            return None
 
 wuzapi_client = WuzAPIService()

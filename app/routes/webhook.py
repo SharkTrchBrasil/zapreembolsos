@@ -91,20 +91,36 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
         # --- Extraindo o texto e detectando Mídia ---
         has_media = False
-        if "conversation" in message:
+        text = ""
+        media_url = None
+        media_key = None
+        media_type = "Image"
+
+        # Em WuzAPI, a mídia pode vir de várias formas
+        if "imageMessage" in message:
+            has_media = True
+            text = message["imageMessage"].get("caption", "")
+            media_url = message["imageMessage"].get("URL")
+            media_key = message["imageMessage"].get("mediaKey")
+            media_type = "Image"
+        elif "documentMessage" in message:
+            has_media = True
+            text = message["documentMessage"].get("caption", "")
+            media_url = message["documentMessage"].get("URL")
+            media_key = message["documentMessage"].get("mediaKey")
+            media_type = "Document"
+        elif "conversation" in message and message["conversation"]:
             text = message["conversation"]
         elif "extendedTextMessage" in message:
             text = message["extendedTextMessage"].get("text", "")
-        elif "imageMessage" in message:
-            text = message["imageMessage"].get("caption", "")
-            has_media = True
-            print("\n=== PAYLOAD DE IMAGEM RECEBIDO ===")
-            print(json.dumps(inner, indent=2))
-            print("==================================\n")
-            # TODO: Fazer o download da mídia no WuzAPI via endpoint específico
-            # pois o base64 geralmente não vem embutido no payload
 
-        print(f"📩 Mensagem recebida | Phone: {phone} | Texto: '{text}' | PushName: {info.get('PushName', 'N/A')}")
+        # Se for mídia ou texto vazio, imprime o payload para debug
+        if has_media or not text:
+            print("\n=== PAYLOAD WUZAPI (MÍDIA/VAZIO) ===")
+            print(json.dumps(inner, indent=2))
+            print("====================================\n")
+
+        print(f"📩 Mensagem recebida | Phone: {phone} | Texto: '{text}' | PushName: {info.get('PushName', 'N/A')} | HasMedia: {has_media}")
 
     else:
         # Fallback: formato genérico (caso o WuzAPI mude ou outro provedor)
@@ -180,11 +196,18 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     if image_base64:
         return await expense_service.process_image_receipt(image_base64, phone, user, company, db)
     elif has_media:
-        # Quando WuzAPI manda a imagem, mas não pegamos o base64
-        # Mandamos um aviso para o usuário
+        if media_url and media_key:
+            import base64
+            # Baixa a mídia nativamente
+            media_bytes = await wuzapi_client.download_media(media_url, media_key, media_type)
+            if media_bytes:
+                image_base64_encoded = base64.b64encode(media_bytes).decode('utf-8')
+                return await expense_service.process_image_receipt(image_base64_encoded, phone, user, company, db)
+        
+        # Se falhou ou não tinha url/key
         await wuzapi_client.send_text_message(
             phone, 
-            "📸 Recebi sua imagem! Mas no momento ainda estou aprendendo a baixar as fotos enviadas por aqui. Para registrar despesas, mande o comando: *DESPESA 50.00 Motivo*"
+            "📸 Recebi sua imagem! Mas falhei ao processar a foto. Certifique-se de enviá-la novamente ou usar o comando: *DESPESA 50.00 Motivo*"
         )
         return {"status": "ok"}
 
