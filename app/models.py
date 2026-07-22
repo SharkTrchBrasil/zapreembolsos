@@ -53,6 +53,7 @@ class User(Base):
 
     phone: Mapped[str] = mapped_column(String(30), primary_key=True) # WhatsApp: ex 5511999998888
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(100), nullable=True) # E-mail do usuário
     department: Mapped[str | None] = mapped_column(String(100), nullable=True) # Setor / Secretaria
     job_title: Mapped[str | None] = mapped_column(String(100), nullable=True) # Cargo / Profissão
     is_approved: Mapped[bool] = mapped_column(Boolean, default=True) # Se já foi aprovado pelo gestor

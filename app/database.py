@@ -25,6 +25,7 @@ async def init_db():
         # Garante que todas as colunas novas sejam adicionadas em tabelas pré-existentes no PostgreSQL
         migration_sqls = [
             # Tabela users
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100);",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(100);",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT TRUE;",
