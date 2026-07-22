@@ -23,17 +23,25 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         if token != settings.WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="Unauthorized webhook token")
 
-    # Lemos os bytes brutos primeiro para evitar erros se o Content-Type não for application/json
+    # Lemos os bytes brutos
     try:
         body_bytes = await request.body()
-        print("\n\n=== WEBHOOK RAW BODY ===")
-        print(body_bytes.decode('utf-8'))
-        print("========================\n\n")
+        body_str = body_bytes.decode('utf-8')
         
-        data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+        from urllib.parse import parse_qs
+        parsed_body = parse_qs(body_str)
+        
+        if "jsonData" in parsed_body:
+            # Pega o valor desempacotado da query string
+            json_data_str = parsed_body["jsonData"][0]
+            data = {"jsonData": json_data_str}
+        else:
+            # Fallback para JSON direto
+            data = json.loads(body_str) if body_str else {}
+            
     except Exception as e:
-        print(f"Erro ao ler JSON: {e}")
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        print(f"Erro ao ler Payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
 
     phone = None
     text = ""
