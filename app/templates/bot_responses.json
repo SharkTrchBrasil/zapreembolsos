@@ -1,0 +1,30 @@
+{
+  "templates": [
+    {
+      "intent": "saudacao",
+      "keywords": ["oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "oiii", "eai"],
+      "response": "Olá! 👋 Como posso te ajudar com seus reembolsos hoje?"
+    },
+    {
+      "intent": "como_funciona",
+      "keywords": ["como funciona", "o que faz", "ajuda", "duvida", "dúvida", "instrucoes", "instruções"],
+      "response": "O ZapReembolso automatiza sua prestação de contas! 📸 Basta enviar a foto de um cupom fiscal ou recibo aqui no chat."
+    },
+    {
+      "intent": "enviar_recibo",
+      "keywords": ["enviar", "comprovante", "recibo", "nota", "cupom", "foto"],
+      "response": "Para registrar um reembolso, basta tirar uma foto nítida do seu cupom fiscal ou recibo e me enviar aqui!"
+    },
+    {
+      "intent": "relatorio",
+      "keywords": ["relatorio", "relatório", "resumo", "gastos", "saldo", "mes", "mês"],
+      "response": "💡 Gestor: envie a palavra *RELATORIO* para visualizar o resumo financeiro de reembolsos do mês."
+    },
+    {
+      "intent": "aprovacao",
+      "keywords": ["aprovar", "aceitar", "aprovação", "aprovação", "recusar"],
+      "response": "💡 Gestor: responda com *1* para aprovar ou *2* para recusar solicitações de funcionários e comprovantes!"
+    }
+  ],
+  "default_fallback": "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo. Se for gestor, envie *RELATORIO*."
+}

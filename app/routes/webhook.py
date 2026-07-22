@@ -151,13 +151,19 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         await db.commit()
         await db.refresh(user)
 
-    # 2. Comando do Gestor para Aprovar/Recusar cadastro de funcionário
-    if clean_text.upper().startswith("ACEITAR") or clean_text.upper().startswith("RECUSAR"):
-        comp_query = select(Company).where(Company.id == user.company_id)
-        comp_res = await db.execute(comp_query)
-        company = comp_res.scalar_one_or_none()
-        if company:
-            return await command_handler.handle_aceitar_recusar(clean_text, phone, user, company, db)
+    # 2. Comando do Gestor para Aprovar/Recusar cadastro de funcionário (Suporta 1, 01, 2, 02, ACEITAR, RECUSAR)
+    raw_upper = clean_text.upper().strip()
+    if user.role == UserRole.ADMIN and user.company_id:
+        if raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR") or raw_upper in ["1", "01", "2", "02"]:
+            comp_query = select(Company).where(Company.id == user.company_id)
+            comp_res = await db.execute(comp_query)
+            company = comp_res.scalar_one_or_none()
+            if company:
+                pending_query = select(User).where(User.company_id == company.id, User.is_approved == False)
+                pending_res = await db.execute(pending_query)
+                has_pending = len(pending_res.scalars().all()) > 0
+                if has_pending or raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR"):
+                    return await command_handler.handle_aceitar_recusar(clean_text, phone, user, company, db)
 
     # 3. MÁQUINA DE ESTADOS DO LEAD (Onboarding iugu-Style)
     if user.onboarding_step and user.onboarding_step.startswith("LEAD_"):

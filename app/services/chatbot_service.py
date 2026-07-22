@@ -1,4 +1,6 @@
 import logging
+import json
+import os
 from typing import Optional
 from google import genai
 from google.genai import types
@@ -6,16 +8,32 @@ from app.config import settings
 
 logger = logging.getLogger("chatbot_service")
 
+TEMPLATE_FILE = os.path.join(os.path.dirname(__file__), "..", "templates", "bot_responses.json")
+
 class ChatbotService:
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
         self.client = None
         self.client_ready = False
+        self.templates_data = {"templates": [], "default_fallback": "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo."}
+        self._load_templates()
         self._setup_client()
+
+    def _load_templates(self):
+        """Carrega templates locais em JSON para fallback inteligente quando a IA falhar ou esgotar a cota."""
+        try:
+            if os.path.exists(TEMPLATE_FILE):
+                with open(TEMPLATE_FILE, "r", encoding="utf-8") as f:
+                    self.templates_data = json.load(f)
+                logger.info(f"[Chatbot] {len(self.templates_data.get('templates', []))} templates JSON carregados com sucesso.")
+            else:
+                logger.warning(f"[Chatbot] Arquivo de templates não encontrado em {TEMPLATE_FILE}")
+        except Exception as e:
+            logger.error(f"[Chatbot] Erro ao carregar templates JSON: {e}")
 
     def _setup_client(self):
         if not self.api_key:
-            logger.warning("[Chatbot] GEMINI_API_KEY não configurada. IA desabilitada.")
+            logger.warning("[Chatbot] GEMINI_API_KEY não configurada. Usando motor de templates locais.")
             return
 
         try:
@@ -35,27 +53,42 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
         except Exception as e:
             logger.error(f"[Chatbot] Erro ao inicializar Gemini: {e}")
 
+    def _get_template_response(self, text: str) -> str:
+        """Busca a melhor resposta em template JSON por correspondência de palavras-chave."""
+        clean_text = text.lower().strip()
+        for t in self.templates_data.get("templates", []):
+            for kw in t.get("keywords", []):
+                if kw in clean_text:
+                    return t.get("response")
+        return self.templates_data.get("default_fallback", "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo.")
+
     async def generate_response(self, text: str) -> str:
         if not self.client_ready:
-            return "Olá. Para registrar uma despesa, envie a foto do cupom fiscal ou recibo."
-            
-        try:
-            # Configurando temperatura e instruções de sistema
-            config = types.GenerateContentConfig(
-                system_instruction=self.system_instruction,
-                temperature=0.2,
-                max_output_tokens=150
-            )
-            
-            # Usando generate_content_async para não travar o event loop do FastAPI
-            response = await self.client.aio.models.generate_content(
-                model='gemini-2.0-flash',
-                contents=text,
-                config=config
-            )
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"[Chatbot] Falha ao gerar resposta (Gemini): {e}")
-            return "Desculpe, erro técnico. Para solicitar reembolso, envie a foto do recibo."
+            return self._get_template_response(text)
+
+        # Modelos para tentar caso ocorra 429 Rate/Quota Limit
+        models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite']
+        
+        config = types.GenerateContentConfig(
+            system_instruction=self.system_instruction,
+            temperature=0.2,
+            max_output_tokens=150
+        )
+
+        for model_name in models_to_try:
+            try:
+                response = await self.client.aio.models.generate_content(
+                    model=model_name,
+                    contents=text,
+                    config=config
+                )
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                logger.warning(f"[Chatbot] Falha no modelo {model_name}: {e}. Tentando fallback...")
+
+        # Se todos os modelos de IA falharem (ex: cota esgotada), usa o Template JSON
+        logger.info("[Chatbot] Utilizando resposta via Template JSON após esgotamento de cota da IA.")
+        return self._get_template_response(text)
 
 chatbot_service = ChatbotService()
