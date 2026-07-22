@@ -1,5 +1,7 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import settings
 import app.models
@@ -34,8 +36,12 @@ app.include_router(webhook.router)
 
 @app.get("/")
 async def root():
-    return {
+    """Servindo a Landing Page HTML do ZapReembolso na raiz."""
+    static_html = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    if os.path.exists(static_html):
+        return FileResponse(static_html)
+    return JSONResponse({
         "app": settings.PROJECT_NAME,
         "status": "online",
         "wuzapi": settings.WUZAPI_BASE_URL
-    }
+    })
