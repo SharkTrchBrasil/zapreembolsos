@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import settings
+import app.models
 from app.database import init_db
 from app.routes import webhook
 from app.services.notification_service import run_daily_reminder_job
