@@ -38,7 +38,7 @@ class OCRService:
         try:
             image_bytes = base64.b64decode(image_base64)
             response = await self.client.aio.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
