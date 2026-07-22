@@ -212,8 +212,8 @@ class CommandHandler:
         raw_cmd = clean_text.upper().strip()
         parts = clean_text.split()
         
-        is_shortcut_1 = raw_cmd in ["1", "ACEITAR", "APROVAR"]
-        is_shortcut_2 = raw_cmd in ["2", "RECUSAR", "NEGAR"]
+        is_shortcut_1 = raw_cmd in ["1", "01", "ACEITAR", "APROVAR"]
+        is_shortcut_2 = raw_cmd in ["2", "02", "RECUSAR", "NEGAR"]
 
         action = "ACEITAR" if (raw_cmd.startswith("ACEITAR") or is_shortcut_1) else "RECUSAR"
         target_phone = parts[1].replace("+", "").replace("-", "").strip() if len(parts) >= 2 else None
