@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
+    libzbar0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copia e instala dependências Python
