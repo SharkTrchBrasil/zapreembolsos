@@ -89,14 +89,20 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         if info.get("IsFromMe", False):
             return {"status": "ignored", "reason": "Message from self"}
 
-        # --- Extraindo o texto ---
+        # --- Extraindo o texto e detectando Mídia ---
+        has_media = False
         if "conversation" in message:
             text = message["conversation"]
         elif "extendedTextMessage" in message:
             text = message["extendedTextMessage"].get("text", "")
         elif "imageMessage" in message:
             text = message["imageMessage"].get("caption", "")
-            # TODO: Extrair imagem base64 quando WuzAPI suportar
+            has_media = True
+            print("\n=== PAYLOAD DE IMAGEM RECEBIDO ===")
+            print(json.dumps(inner, indent=2))
+            print("==================================\n")
+            # TODO: Fazer o download da mídia no WuzAPI via endpoint específico
+            # pois o base64 geralmente não vem embutido no payload
 
         print(f"📩 Mensagem recebida | Phone: {phone} | Texto: '{text}' | PushName: {info.get('PushName', 'N/A')}")
 
@@ -173,6 +179,14 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     # 7. Processamento de Imagem (Cupom Fiscal / Recibo)
     if image_base64:
         return await expense_service.process_image_receipt(image_base64, phone, user, company, db)
+    elif has_media:
+        # Quando WuzAPI manda a imagem, mas não pegamos o base64
+        # Mandamos um aviso para o usuário
+        await wuzapi_client.send_text_message(
+            phone, 
+            "📸 Recebi sua imagem! Mas no momento ainda estou aprendendo a baixar as fotos enviadas por aqui. Para registrar despesas, mande o comando: *DESPESA 50.00 Motivo*"
+        )
+        return {"status": "ok"}
 
     # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
     if clean_text:
