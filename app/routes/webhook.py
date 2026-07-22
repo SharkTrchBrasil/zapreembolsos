@@ -385,9 +385,9 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             plan_menu = (
                 "🚀 *Escolha seu Plano de Teste (30 Dias Grátis - Sem Cartão)*\n\n"
                 "Sua empresa terá 30 dias de acesso total e ilimitado para testar com a equipe!\n\n"
-                "1️⃣ *Plano Starter* (Até 10 funcionários) — _R$ 99,00/mês pós teste_\n"
-                "2️⃣ *Plano Pro* (Até 50 funcionários + Relatórios) — _R$ 299,00/mês pós teste_\n"
-                "3️⃣ *Plano Enterprise* (50+ funcionários + Suporte) — _R$ 699,00/mês pós teste_\n\n"
+                "1️⃣ *Plano Starter* (Até 5 funcionários) — _R$ 49,90/mês pós teste_\n"
+                "2️⃣ *Plano Pro* (Até 20 funcionários + Relatórios) — _R$ 99,90/mês pós teste_\n"
+                "3️⃣ *Plano Enterprise* (Ilimitado + Suporte VIP) — _R$ 199,90/mês pós teste_\n\n"
                 "Digite *1*, *2* ou *3* para ativar seus 30 dias grátis:"
             )
             await wuzapi_client.send_text_message(phone, plan_menu)
@@ -395,15 +395,15 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
         elif user.onboarding_step == "COMP_PLAN":
             plan_choice = clean_text.strip()
-            price = 99.0
-            plan_name = "Starter (Até 10 funcionários)"
+            price = 49.90
+            plan_name = "Starter (Até 5 funcionários)"
             
             if plan_choice in ["2", "pro"]:
-                price = 299.0
-                plan_name = "Pro (Até 50 funcionários)"
+                price = 99.90
+                plan_name = "Pro (Até 20 funcionários)"
             elif plan_choice in ["3", "enterprise"]:
-                price = 699.0
-                plan_name = "Enterprise (50+ funcionários)"
+                price = 199.90
+                plan_name = "Enterprise (Ilimitado)"
 
             trial_expiration = datetime.now(timezone.utc) + timedelta(days=30)
             
