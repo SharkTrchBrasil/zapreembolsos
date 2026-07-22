@@ -31,6 +31,10 @@ class StorageService:
             return None
 
         try:
+            # Mostra qual chave está sendo usada (para debug)
+            masked_key = f"{aws_access_key[:4]}...{aws_access_key[-4:]}" if len(aws_access_key) > 8 else "***"
+            logger.info(f"🔑 Tentando autenticar no S3 com Access Key: {masked_key}")
+            
             self._s3_client = boto3.client(
                 's3',
                 aws_access_key_id=aws_access_key,
