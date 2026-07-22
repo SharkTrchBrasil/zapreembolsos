@@ -23,9 +23,16 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         if token != settings.WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="Unauthorized webhook token")
 
+    # Lemos os bytes brutos primeiro para evitar erros se o Content-Type não for application/json
     try:
-        data = await request.json()
-    except Exception:
+        body_bytes = await request.body()
+        print("\n\n=== WEBHOOK RAW BODY ===")
+        print(body_bytes.decode('utf-8'))
+        print("========================\n\n")
+        
+        data = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+    except Exception as e:
+        print(f"Erro ao ler JSON: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     phone = None
