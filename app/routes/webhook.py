@@ -12,8 +12,12 @@ from app.services.chatbot_service import chatbot_service
 from app.services.humanizer_service import send_humanized_message
 from app.services.command_handler import command_handler
 from app.services.expense_service import expense_service
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/webhook", tags=["Webhook"])
+
+# Cache em memória para evitar loop infinito com outros robôs (ex: Gringo)
+welcome_sent_cache = {}
 
 @router.post("/wuzapi")
 async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
@@ -134,6 +138,9 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     phone = str(phone).replace("@s.whatsapp.net", "").replace("+", "").strip()
     clean_text = text.strip() if text else ""
 
+    if not clean_text and not has_media:
+        return {"status": "ignored", "reason": "Empty message and no media"}
+
     # 1. Busca ou cria o registro inicial do Usuário
     user_query = select(User).where(User.phone == phone)
     res = await db.execute(user_query)
@@ -155,15 +162,22 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
     # 4. Verifica se o usuário já possui empresa vinculada
     if not user.company_id:
-        unlinked_msg = (
-            "👋 **Bem-vindo ao ZapReembolso!**\n\n"
-            "Não encontrei nenhuma empresa vinculada ao seu número.\n\n"
-            "👉 **Se você é Funcionário:**\n"
-            "Digite o Código da sua empresa (ex: `#ALFA12`) fornecido pelo seu gestor.\n\n"
-            "👉 **Se você é Gestor/Dono de Empresa:**\n"
-            "Digite *CRIAR Nome da Sua Empresa* para cadastrar sua empresa agora!"
-        )
-        await wuzapi_client.send_text_message(phone, unlinked_msg)
+        now = datetime.now()
+        last_sent = welcome_sent_cache.get(phone)
+        
+        # Só envia a mensagem de boas-vindas se não tiver enviado na última hora
+        if not last_sent or (now - last_sent) > timedelta(hours=1):
+            unlinked_msg = (
+                "👋 **Bem-vindo ao ZapReembolso!**\n\n"
+                "Não encontrei nenhuma empresa vinculada ao seu número.\n\n"
+                "👉 **Se você é Funcionário:**\n"
+                "Digite o Código da sua empresa (ex: `#ALFA12`) fornecido pelo seu gestor.\n\n"
+                "👉 **Se você é Gestor/Dono de Empresa:**\n"
+                "Digite *CRIAR Nome da Sua Empresa* para cadastrar sua empresa agora!"
+            )
+            await wuzapi_client.send_text_message(phone, unlinked_msg)
+            welcome_sent_cache[phone] = now
+            
         return {"status": "ok"}
 
     # Busca os dados da empresa cadastrada
