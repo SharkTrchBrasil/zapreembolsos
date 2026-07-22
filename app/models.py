@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, date, timezone
-from sqlalchemy import String, Float, Numeric, Date, DateTime, Enum, ForeignKey, Text
+from sqlalchemy import String, Float, Numeric, Date, DateTime, Enum, ForeignKey, Text, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -35,10 +35,13 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(100))
     admin_phone: Mapped[str] = mapped_column(String(30)) # Telefone do Gestor Principal
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
+    km_rate: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True) # Valor por km para reembolso
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     expenses: Mapped[list["Expense"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    policies: Mapped[list["PolicyRule"]] = relationship(back_populates="company", cascade="all, delete-orphan")
+    monthly_closes: Mapped[list["MonthlyClose"]] = relationship(back_populates="company", cascade="all, delete-orphan")
 
 class User(Base):
     __tablename__ = "users"
@@ -50,7 +53,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     company: Mapped["Company | None"] = relationship(back_populates="users")
-    expenses: Mapped[list["Expense"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    expenses: Mapped[list["Expense"]] = relationship("Expense", foreign_keys="[Expense.user_phone]", back_populates="user", cascade="all, delete-orphan")
 
 class Expense(Base):
     __tablename__ = "expenses"
@@ -65,7 +68,49 @@ class Expense(Base):
     category: Mapped[ExpenseCategory] = mapped_column(Enum(ExpenseCategory), default=ExpenseCategory.OUTROS)
     status: Mapped[ExpenseStatus] = mapped_column(Enum(ExpenseStatus), default=ExpenseStatus.PENDING)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Novos campos Fase 1
+    image_s3_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ocr_raw_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nfce_access_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_duplicate_suspect: Mapped[bool] = mapped_column(Boolean, default=False)
+    justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(30), ForeignKey("users.phone"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    has_receipt: Mapped[bool] = mapped_column(Boolean, default=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    user: Mapped["User"] = relationship(back_populates="expenses")
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_phone], back_populates="expenses")
+    approver: Mapped["User | None"] = relationship("User", foreign_keys=[approved_by])
     company: Mapped["Company"] = relationship(back_populates="expenses")
+
+class PolicyRule(Base):
+    __tablename__ = "policy_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id"))
+    category: Mapped[ExpenseCategory | None] = mapped_column(Enum(ExpenseCategory), nullable=True)
+    max_amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    requires_receipt: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    company: Mapped["Company"] = relationship(back_populates="policies")
+
+class MonthlyClose(Base):
+    __tablename__ = "monthly_closes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id"))
+    year: Mapped[int] = mapped_column(nullable=False)
+    month: Mapped[int] = mapped_column(nullable=False)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    closed_by: Mapped[str] = mapped_column(String(30), ForeignKey("users.phone"))
+    total_amount: Mapped[float] = mapped_column(Numeric(10, 2))
+    total_expenses: Mapped[int] = mapped_column(nullable=False)
+
+    company: Mapped["Company"] = relationship(back_populates="monthly_closes")
+    closer: Mapped["User"] = relationship("User", foreign_keys=[closed_by])
