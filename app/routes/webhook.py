@@ -118,11 +118,10 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         elif "extendedTextMessage" in message:
             text = message["extendedTextMessage"].get("text", "")
 
-        # Se for mídia ou texto vazio, imprime o payload para debug
-        if has_media or not text:
-            print("\n=== PAYLOAD WUZAPI (MÍDIA/VAZIO) ===")
-            print(json.dumps(inner, indent=2))
-            print("====================================\n")
+        # Log compacto (sem JPEGThumbnail/base64 que são enormes)
+        if has_media:
+            media_info = message.get("imageMessage") or message.get("documentMessage") or {}
+            print(f"\n📷 MÍDIA RECEBIDA | URL: {media_info.get('URL', 'N/A')[:80]}... | mediaKey: {media_info.get('mediaKey', 'N/A')} | mime: {media_info.get('mimetype', 'N/A')} | size: {media_info.get('fileLength', 'N/A')}")
 
         print(f"📩 Mensagem recebida | Phone: {phone} | Texto: '{text}' | PushName: {info.get('PushName', 'N/A')} | HasMedia: {has_media}")
 
