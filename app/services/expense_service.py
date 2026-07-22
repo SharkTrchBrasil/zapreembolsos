@@ -57,7 +57,15 @@ class ExpenseService:
                 )
                 dup_res = await db.execute(dup_query)
                 if dup_res.scalars().first():
-                    is_duplicate = True
+                    await wuzapi_client.send_text_message(
+                        phone,
+                        f"⚠️ *Alerta de Duplicidade!*\n\n"
+                        f"Detectei que você já enviou um recibo deste estabelecimento (CNPJ: {cnpj}) com o exato valor de *R$ {amount:.2f}* para a data {exp_date_obj.strftime('%d/%m/%Y')}.\n\n"
+                        f"🚫 *Esta despesa não foi salva para evitar fraude ou cobrança dupla.*\n\n"
+                        f"💡 Se esta for *realmente* uma nova despesa (ex: você foi ao mesmo local 2x no mesmo dia), por favor, lance-a manualmente usando o comando:\n"
+                        f"*DESPESA {amount:.2f} {parsed.get('merchant_name', 'Nome do Local')}*"
+                    )
+                    return {"status": "ok"}
 
             # Validação de Política
             is_valid, policy_reason = await policy_service.validate_expense(
