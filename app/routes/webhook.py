@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.config import settings
-from app.models import User, Company, UserRole
+from app.models import User, Company, UserRole, PlanType
 from app.services.wuzapi_service import wuzapi_client
 from app.services.chatbot_service import chatbot_service
 from app.services.humanizer_service import send_humanized_message
