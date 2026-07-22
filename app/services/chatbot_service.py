@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.config import settings
 
 logger = logging.getLogger("chatbot_service")
@@ -8,7 +9,7 @@ logger = logging.getLogger("chatbot_service")
 class ChatbotService:
     def __init__(self):
         self.api_key = settings.GEMINI_API_KEY
-        self.model = None
+        self.client = None
         self.client_ready = False
         self._setup_client()
 
@@ -18,9 +19,8 @@ class ChatbotService:
             return
 
         try:
-            genai.configure(api_key=self.api_key)
-            
-            system_instruction = """
+            self.client = genai.Client(api_key=self.api_key)
+            self.system_instruction = """
 Você é o assistente virtual executivo do ZapReembolso.
 O usuário enviou uma mensagem de texto com uma dúvida ou saudação.
 
@@ -31,11 +31,6 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
 4. Se perguntarem sobre relatórios ou aprovações, diga que as funções (RELATORIO, APROVAR) são exclusivas para gestores.
 5. Nunca invente dados ou regras adicionais.
 """
-            # Utilizando gemini-2.0-flash (ou gemini-1.5-flash) para respostas rápidas de texto e visão
-            self.model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash",
-                system_instruction=system_instruction
-            )
             self.client_ready = True
         except Exception as e:
             logger.error(f"[Chatbot] Erro ao inicializar Gemini: {e}")
@@ -45,16 +40,18 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
             return "Olá. Para registrar uma despesa, envie a foto do cupom fiscal ou recibo."
             
         try:
-            # temperature baixa para ser direto e sem enrolação
-            generation_config = genai.GenerationConfig(
+            # Configurando temperatura e instruções de sistema
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
                 temperature=0.2,
                 max_output_tokens=150
             )
             
             # Usando generate_content_async para não travar o event loop do FastAPI
-            response = await self.model.generate_content_async(
-                text,
-                generation_config=generation_config
+            response = await self.client.aio.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=text,
+                config=config
             )
             return response.text.strip()
         except Exception as e:
