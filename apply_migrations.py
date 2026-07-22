@@ -21,31 +21,27 @@ async def main():
     engine = create_async_engine(db_url, echo=True)
     
     async with engine.begin() as conn:
-        logger.info("🛠️ Criando tabelas novas (ex: PolicyRule)...")
-        await conn.run_sync(Base.metadata.create_all)
+        logger.info("🗑️ Resetando schema do banco de dados (apagando tabelas antigas)...")
         
-        logger.info("⚡ Atualizando tabela 'expenses' com os novos campos da Fase 1...")
-        
-        alter_statements = [
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS image_s3_key VARCHAR(255);",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS ocr_confidence FLOAT;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS ocr_raw_data TEXT;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS nfce_access_key VARCHAR(50);",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS is_duplicate_suspect BOOLEAN DEFAULT FALSE;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS justification TEXT;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_by VARCHAR(30);",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP WITH TIME ZONE;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN DEFAULT TRUE;"
+        # Apagamos as tabelas em ordem para evitar erros de chave estrangeira
+        drop_statements = [
+            "DROP TABLE IF EXISTS monthly_closes CASCADE;",
+            "DROP TABLE IF EXISTS policy_rules CASCADE;",
+            "DROP TABLE IF EXISTS expenses CASCADE;",
+            "DROP TABLE IF EXISTS users CASCADE;",
+            "DROP TABLE IF EXISTS companies CASCADE;"
         ]
 
-        for stmt in alter_statements:
+        for stmt in drop_statements:
             try:
                 await conn.execute(text(stmt))
             except Exception as e:
                 logger.warning(f"Aviso ao executar '{stmt}': {e}")
                 
-        logger.info("✅ Migração concluída com sucesso!")
+        logger.info("🛠️ Criando tabelas com o esquema mais recente...")
+        await conn.run_sync(Base.metadata.create_all)
+        
+        logger.info("✅ Migração e Reset concluídos com sucesso!")
         
     await engine.dispose()
 
