@@ -46,11 +46,11 @@ class CommandHandler:
         await db.commit()
 
         welcome_admin = (
-            f"🎉 **Empresa {company_name} Criada com Sucesso!**\n\n"
-            f"🏢 **Código da Sua Empresa:** `#{code}`\n\n"
-            f"📢 **Passo para seus funcionários:**\n"
+            f"🎉 *Empresa {company_name} Criada com Sucesso!*\n\n"
+            f"🏢 *Código da Sua Empresa:* `#{code}`\n\n"
+            f"📢 *Passo para seus funcionários:*\n"
             f"Envie este contato para seus funcionários e peça para eles mandarem `#{code}` no primeiro acesso para se vincularem!\n\n"
-            f"💡 **Seus Comandos:**\n"
+            f"💡 *Seus Comandos:*\n"
             f"• Envie *RELATORIO* para ver gastos do mês.\n"
             f"• Envie *APROVAR [ID]* para dar baixa em reembolso."
         )
@@ -69,8 +69,8 @@ class CommandHandler:
             await db.commit()
 
             link_msg = (
-                f"✅ **Conta Vinculada à empresa {target_company.name}!**\n\n"
-                f"A partir de agora, qualquer foto de **cupom fiscal ou recibo** que você enviar aqui será registrada automaticamente para o reembolso do seu gestor."
+                f"✅ *Conta Vinculada à empresa {target_company.name}!*\n\n"
+                f"A partir de agora, qualquer foto de *cupom fiscal ou recibo* que você enviar aqui será registrada automaticamente para o reembolso do seu gestor."
             )
             await wuzapi_client.send_text_message(phone, link_msg)
         else:

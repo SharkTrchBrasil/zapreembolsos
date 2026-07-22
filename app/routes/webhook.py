@@ -167,7 +167,7 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             await db.commit()
             await wuzapi_client.send_text_message(
                 phone, 
-                f"Prazer, **{user.name}**! 👋\n\nQual é o seu **Setor ou Secretaria** na empresa/órgão? (ex: *Obras, Saúde, Vendas, Financeiro*)"
+                f"Prazer, *{user.name}*! 👋\n\nQual é o seu *Setor ou Secretaria* na empresa/órgão? (ex: _Obras, Saúde, Vendas, Financeiro_)"
             )
             return {"status": "ok"}
 
@@ -177,7 +177,7 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             await db.commit()
             await wuzapi_client.send_text_message(
                 phone, 
-                f"Excelente! Qual é a sua **Profissão ou Cargo**? (ex: *Engenheiro, Motorista, Fiscal, Consultor*)"
+                f"Excelente! Qual é a sua *Profissão ou Cargo*? (ex: _Engenheiro, Motorista, Fiscal, Consultor_)"
             )
             return {"status": "ok"}
 
@@ -188,13 +188,12 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             await wuzapi_client.send_text_message(
                 phone, 
                 f"Perfeito! 📝\n\nAgora para vincular sua conta à sua empresa ou prefeitura, informe:\n"
-                f"👉 O **Código da Empresa** (ex: `#ALFA12`), ou\n"
-                f"👉 O **Telefone do seu Gestor/Empresa**."
+                f"👉 O *Código da Empresa* (ex: `#ALFA12`), ou\n"
+                f"👉 O *Telefone do seu Gestor/Empresa*."
             )
             return {"status": "ok"}
 
         elif user.onboarding_step == "EMP_CODE":
-            # Tenta localizar a empresa por Código (#) ou por Telefone do Gestor
             raw_input = clean_text.replace("#", "").replace("+", "").replace("-", "").strip()
             
             comp_query = select(Company).where(
@@ -228,8 +227,8 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                 # Notifica o Funcionário
                 await wuzapi_client.send_text_message(
                     phone,
-                    f"⏳ **Solicitação enviada com sucesso!**\n\n"
-                    f"Seus dados (*{user.name} - {user.job_title}*) foram enviados para o gestor da empresa **{target_company.name}**.\n"
+                    f"⏳ *Solicitação enviada com sucesso!*\n\n"
+                    f"Seus dados (*{user.name} - {user.job_title}*) foram enviados para o gestor da empresa *{target_company.name}*.\n"
                     f"Assim que ele aprovar seu cadastro, você receberá uma notificação aqui e poderá enviar seus comprovantes!"
                 )
                 return {"status": "ok"}
@@ -247,14 +246,38 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         comp_res = await db.execute(comp_query)
         comp = comp_res.scalar_one_or_none()
 
-        if user.onboarding_step == "COMP_CNPJ":
+        if user.onboarding_step == "COMP_NAME":
+            company_name = clean_text.strip()
+            from app.services.command_handler import generate_company_code
+            code = generate_company_code(company_name)
+            new_company = Company(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=company_name,
+                admin_phone=phone,
+                plan=PlanType.FREE_TRIAL
+            )
+            db.add(new_company)
+            user.company_id = new_company.id
+            user.role = UserRole.ADMIN
+            user.onboarding_step = "COMP_CNPJ"
+            await db.commit()
+
+            await wuzapi_client.send_text_message(
+                phone,
+                f"🏢 *Empresa {company_name} registrada!*\n\n"
+                f"Por favor, digite o *CNPJ* da empresa/órgão (necessário para faturamento e segurança):"
+            )
+            return {"status": "ok"}
+
+        elif user.onboarding_step == "COMP_CNPJ":
             if comp:
                 comp.cnpj = clean_text
             user.onboarding_step = "COMP_ADMIN_NAME"
             await db.commit()
             await wuzapi_client.send_text_message(
                 phone,
-                f"Ótimo! Qual o seu **Nome Completo** (Responsável pelo contrato/gestão)?"
+                f"Ótimo! Qual o seu *Nome Completo* (Responsável pelo contrato/gestão)?"
             )
             return {"status": "ok"}
 
@@ -267,10 +290,10 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             await wuzapi_client.send_text_message(
                 phone,
                 f"Qual a estimativa de funcionários que usarão o reembolso?\n\n"
-                f"1️⃣ **Até 10 funcionários** (Small)\n"
-                f"2️⃣ **10 a 50 funcionários** (Medium)\n"
-                f"3️⃣ **50 a 500+ funcionários** (Enterprise / Prefeitura)\n\n"
-                f"Digite 1, 2 ou 3:"
+                f"1️⃣ *Até 10 funcionários* (Small)\n"
+                f"2️⃣ *10 a 50 funcionários* (Medium)\n"
+                f"3️⃣ *50 a 500+ funcionários* (Enterprise / Prefeitura)\n\n"
+                f"Digite *1*, *2* ou *3*:"
             )
             return {"status": "ok"}
 
@@ -286,14 +309,14 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             c_name = comp.name if comp else "Sua Empresa"
 
             welcome_admin = (
-                f"🎉 **Cadastro da Empresa {c_name} Concluído!**\n\n"
-                f"🏢 **Código da Empresa:** `#{code}`\n"
-                f"👤 **Gestor Responsável:** {user.name}\n"
-                f"📄 **CNPJ:** {comp.cnpj if comp else 'Não informado'}\n"
-                f"👥 **Porte:** {size_val} funcionários\n\n"
-                f"📢 **Como adicionar funcionários:**\n"
+                f"🎉 *Cadastro da Empresa {c_name} Concluído!*\n\n"
+                f"🏢 *Código da Empresa:* `#{code}`\n"
+                f"👤 *Gestor Responsável:* {user.name}\n"
+                f"📄 *CNPJ:* {comp.cnpj if comp else 'Não informado'}\n"
+                f"👥 *Porte:* {size_val} funcionários\n\n"
+                f"📢 *Como adicionar funcionários:*\n"
                 f"Passe o código `#{code}` para seus funcionários ou peça para eles enviarem o seu telefone no primeiro acesso!\n\n"
-                f"💡 **Seus Comandos de Gestor:**\n"
+                f"💡 *Seus Comandos de Gestor:*\n"
                 f"• Envie *RELATORIO* para ver gastos do mês.\n"
                 f"• Envie *APROVAR [ID]* ou apenas *1* para aprovar reembolsos.\n"
                 f"• Envie *ACEITAR [Telefone]* para aprovar novos funcionários."
@@ -301,11 +324,47 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             await wuzapi_client.send_text_message(phone, welcome_admin)
             return {"status": "ok"}
 
-    # 5. Inicialização do Comando CRIAR Empresa (Passo 1)
+    # 5. MÁQUINA DE ESTADOS: Seleção de Perfil (SELECT_ROLE)
+    if user.onboarding_step == "SELECT_ROLE":
+        cmd = clean_text.strip().lower()
+        if cmd in ["1", "funcionario", "funcionário", "sou funcionario", "sou funcionário"]:
+            user.role = UserRole.EMPLOYEE
+            user.onboarding_step = "EMP_NAME"
+            await db.commit()
+            await wuzapi_client.send_text_message(
+                phone,
+                "Perfeito! 👤 Para iniciarmos seu cadastro, por favor digite o seu *Nome Completo*:"
+            )
+            return {"status": "ok"}
+        elif cmd in ["2", "gestor", "empresa", "dono", "sou gestor", "sou empresa"]:
+            user.role = UserRole.ADMIN
+            user.onboarding_step = "COMP_NAME"
+            await db.commit()
+            await wuzapi_client.send_text_message(
+                phone,
+                "🏢 Excelente! Qual é o *Nome Fantasia ou Razão Social* da sua empresa ou prefeitura?"
+            )
+            return {"status": "ok"}
+        else:
+            # Menu de seleção
+            role_menu = (
+                "👋 *Bem-vindo ao ZapReembolso!*\n\n"
+                "Como você deseja utilizar o sistema hoje?\n\n"
+                "1️⃣ *Sou Funcionário* (Quero solicitar reembolsos e enviar cupons)\n"
+                "2️⃣ *Sou Gestor / Dono de Empresa* (Quero cadastrar minha empresa ou prefeitura)\n\n"
+                "Digite *1* ou *2* para escolher:"
+            )
+            await wuzapi_client.send_text_message(phone, role_menu)
+            return {"status": "ok"}
+
+    # 6. Inicialização do Comando CRIAR Empresa (Atalho direto)
     if clean_text.upper().startswith("CRIAR"):
         company_name = clean_text[5:].strip()
         if not company_name:
-            await wuzapi_client.send_text_message(phone, "❌ Por favor, informe o nome da sua empresa. Exemplo: *CRIAR Construtora Alfa*")
+            user.role = UserRole.ADMIN
+            user.onboarding_step = "COMP_NAME"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🏢 Qual o nome da sua empresa ou prefeitura?")
             return {"status": "ok"}
 
         from app.services.command_handler import generate_company_code
@@ -325,41 +384,28 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
         await wuzapi_client.send_text_message(
             phone,
-            f"🏢 **Iniciando cadastro da empresa {company_name}!**\n\n"
-            f"Por favor, digite o **CNPJ** da empresa/órgão (necessário para faturamento e segurança):"
+            f"🏢 *Iniciando cadastro da empresa {company_name}!*\n\n"
+            f"Por favor, digite o *CNPJ* da empresa/órgão (necessário para faturamento e segurança):"
         )
         return {"status": "ok"}
 
-    # 6. Comando de Vinculação Manual (#CODIGO)
+    # 7. Comando de Vinculação Manual (#CODIGO)
     if clean_text.startswith("#") or clean_text.upper().startswith("ENTRAR"):
         return await command_handler.handle_vincular(clean_text, phone, user, db)
 
-    # 7. Usuário sem cadastro completo -> Inicia Wizard de Funcionário
+    # 8. Usuário sem cadastro completo -> Apresenta o Menu de Seleção Inicial (1 ou 2)
     if not user.company_id:
-        if not user.name or user.name == "Novo Usuário":
-            user.onboarding_step = "EMP_NAME"
-            await db.commit()
-            unlinked_msg = (
-                "👋 **Bem-vindo ao ZapReembolso!**\n\n"
-                "Para iniciarmos seu cadastro com segurança, por favor digite o seu **Nome Completo**:"
-            )
-            await wuzapi_client.send_text_message(phone, unlinked_msg)
-            return {"status": "ok"}
-        elif not user.department:
-            user.onboarding_step = "EMP_DEPT"
-            await db.commit()
-            await wuzapi_client.send_text_message(phone, f"Qual o seu **Setor ou Secretaria**? (ex: *Obras, Saúde, Vendas*):")
-            return {"status": "ok"}
-        elif not user.job_title:
-            user.onboarding_step = "EMP_ROLE"
-            await db.commit()
-            await wuzapi_client.send_text_message(phone, f"Qual a sua **Profissão ou Cargo**? (ex: *Engenheiro, Motorista, Fiscal*):")
-            return {"status": "ok"}
-        else:
-            user.onboarding_step = "EMP_CODE"
-            await db.commit()
-            await wuzapi_client.send_text_message(phone, f"Informe o **Código da Empresa** (ex: `#ALFA12`) ou o **Telefone do seu Gestor**:")
-            return {"status": "ok"}
+        user.onboarding_step = "SELECT_ROLE"
+        await db.commit()
+        role_menu = (
+            "👋 *Bem-vindo ao ZapReembolso!*\n\n"
+            "Como você deseja utilizar o sistema hoje?\n\n"
+            "1️⃣ *Sou Funcionário* (Quero solicitar reembolsos e enviar cupons)\n"
+            "2️⃣ *Sou Gestor / Dono de Empresa* (Quero cadastrar minha empresa ou prefeitura)\n\n"
+            "Digite *1* ou *2* para escolher:"
+        )
+        await wuzapi_client.send_text_message(phone, role_menu)
+        return {"status": "ok"}
 
     # 8. Usuário Vinculado mas PENDENTE de aprovação pelo Gestor
     if not user.is_approved:

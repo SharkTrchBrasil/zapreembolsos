@@ -96,12 +96,12 @@ class ExpenseService:
 
             msg_duplicate = "\n⚠️ *Aviso: Parece que este comprovante já foi enviado anteriormente.*" if is_duplicate else ""
             confirm_msg = (
-                f"✅ **Comprovante Registrado!**\n\n"
-                f"🏢 **Local:** {new_expense.merchant_name}\n"
-                f"💰 **Valor:** R$ {new_expense.amount:.2f}\n"
-                f"📅 **Data:** {exp_date_obj.strftime('%d/%m/%Y')}\n"
-                f"🏷️ **Categoria:** {category_enum.value}\n\n"
-                f"📋 *Status:* Pendente de Aprovação do Gestor ({company.name}).{msg_duplicate}"
+                f"✅ *Comprovante Registrado!*\n\n"
+                f"🏢 *Local:* {new_expense.merchant_name}\n"
+                f"💰 *Valor:* R$ {new_expense.amount:.2f}\n"
+                f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"
+                f"🏷️ *Categoria:* {category_enum.value}\n\n"
+                f"📋 _Status:_ Pendente de Aprovação do Gestor ({company.name}).{msg_duplicate}"
             )
             await wuzapi_client.send_text_message(phone, confirm_msg)
 
