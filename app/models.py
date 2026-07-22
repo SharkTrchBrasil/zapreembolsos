@@ -31,6 +31,7 @@ class Company(Base):
     __tablename__ = "companies"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    code: Mapped[str] = mapped_column(String(20), unique=True, index=True) # Ex: ALFA123 (Código para funcionários vincularem)
     name: Mapped[str] = mapped_column(String(100))
     admin_phone: Mapped[str] = mapped_column(String(30)) # Telefone do Gestor Principal
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
