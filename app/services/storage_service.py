@@ -33,7 +33,7 @@ class StorageService:
         try:
             # Mostra qual chave está sendo usada (para debug)
             masked_key = f"{aws_access_key[:4]}...{aws_access_key[-4:]}" if len(aws_access_key) > 8 else "***"
-            logger.info(f"🔑 Tentando autenticar no S3 com Access Key: {masked_key}")
+            print(f"🔑 Tentando autenticar no S3 com Access Key: {masked_key}")
             
             self._s3_client = boto3.client(
                 's3',
@@ -41,11 +41,11 @@ class StorageService:
                 aws_secret_access_key=aws_secret_key,
                 region_name=aws_region
             )
-            logger.info(f"[OK] Cliente S3 inicializado | Bucket: {self.bucket_name} | Region: {aws_region}")
+            print(f"[OK] Cliente S3 inicializado | Bucket: {self.bucket_name} | Region: {aws_region}")
         except (BotoCoreError, ClientError) as e:
-            logger.error(f"[CRITICAL] FALHA ao inicializar o cliente S3: {e}", exc_info=True)
+            print(f"[CRITICAL] FALHA ao inicializar o cliente S3: {e}")
         except Exception as e:
-            logger.error(f"[CRITICAL] ERRO INESPERADO ao inicializar o cliente S3: {e}", exc_info=True)
+            print(f"[CRITICAL] ERRO INESPERADO ao inicializar o cliente S3: {e}")
 
         return self._s3_client
 
