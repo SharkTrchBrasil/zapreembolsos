@@ -31,11 +31,16 @@ class Company(Base):
     __tablename__ = "companies"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    code: Mapped[str] = mapped_column(String(20), unique=True, index=True) # Ex: ALFA123 (Código para funcionários vincularem)
+    code: Mapped[str] = mapped_column(String(20), unique=True, index=True) # Ex: ALFA123
     name: Mapped[str] = mapped_column(String(100))
     admin_phone: Mapped[str] = mapped_column(String(30)) # Telefone do Gestor Principal
+    admin_name: Mapped[str | None] = mapped_column(String(100), nullable=True) # Nome do Gestor Responsável
+    cnpj: Mapped[str | None] = mapped_column(String(20), nullable=True) # CNPJ para faturamento/segurança
+    estimated_employees: Mapped[str | None] = mapped_column(String(50), nullable=True) # Porte (ex: 1-10, 10-50, 50-500)
+    billing_email: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    onboarding_step: Mapped[str | None] = mapped_column(String(50), nullable=True)
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
-    km_rate: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True) # Valor por km para reembolso
+    km_rate: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
@@ -48,6 +53,10 @@ class User(Base):
 
     phone: Mapped[str] = mapped_column(String(30), primary_key=True) # WhatsApp: ex 5511999998888
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    department: Mapped[str | None] = mapped_column(String(100), nullable=True) # Setor / Secretaria
+    job_title: Mapped[str | None] = mapped_column(String(100), nullable=True) # Cargo / Profissão
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=True) # Se já foi aprovado pelo gestor
+    onboarding_step: Mapped[str | None] = mapped_column(String(50), nullable=True) # Passo da máquina de estados
     company_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("companies.id"), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

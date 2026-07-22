@@ -35,6 +35,29 @@ class WuzAPIService:
                 print(f"[WuzAPI ERROR] Falha de rede ao enviar mensagem para {phone}: {e}")
                 return False
 
+    async def send_image_message(self, phone: str, image_url: str, caption: str = "") -> bool:
+        """Envia uma mensagem de imagem com legenda pelo WuzAPI."""
+        url = f"{self.base_url}/chat/send/image"
+        payload = {
+            "Phone": phone,
+            "Image": image_url,
+            "Caption": caption
+        }
+        print(f"\n[WuzAPI SEND IMAGE] Enviando imagem para {url}")
+        print(f"[WuzAPI SEND IMAGE] Phone: {phone} | Caption length: {len(caption)}")
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, json=payload, headers=self.headers, timeout=15.0)
+                print(f"[WuzAPI RESPONSE IMAGE] Status: {response.status_code}")
+                print(f"[WuzAPI RESPONSE IMAGE] Body: {response.text}")
+                return response.status_code in [200, 201]
+            except Exception as e:
+                print(f"[WuzAPI ERROR] Falha ao enviar imagem para {phone}: {e}")
+                # Fallback para mensagem de texto caso o endpoint de imagem falhe
+                fallback_msg = f"{caption}\n\n🔗 **Ver Comprovante:** {image_url}"
+                return await self.send_text_message(phone, fallback_msg)
+
     async def send_typing_indicator(self, phone: str, is_typing: bool = True) -> bool:
         """Envia indicador de 'digitando...' para o contato."""
         url = f"{self.base_url}/chat/presence"

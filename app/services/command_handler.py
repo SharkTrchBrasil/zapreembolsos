@@ -123,18 +123,46 @@ class CommandHandler:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aprovar ou rejeitar despesas.")
             return {"status": "ok"}
             
-        action = "APROVAR" if clean_text.upper().startswith("APROVAR") else "REJEITAR"
+        raw_cmd = clean_text.upper().strip()
+        is_shortcut_1 = raw_cmd in ["1", "APROVAR"]
+        is_shortcut_2 = raw_cmd in ["2", "REJEITAR"]
+
+        action = "APROVAR" if (raw_cmd.startswith("APROVAR") or is_shortcut_1) else "REJEITAR"
         new_status = ExpenseStatus.APPROVED if action == "APROVAR" else ExpenseStatus.REJECTED
         parts = clean_text.split(" ", 2)
         
-        if len(parts) < 2:
-            await wuzapi_client.send_text_message(phone, f"❌ Formato incorreto. Use: *{action} [ID]*")
-            return {"status": "ok"}
+        short_id = None
+        rejection_reason = None
 
-        short_id = parts[1].strip()
-        rejection_reason = parts[2].strip() if len(parts) > 2 else None
+        if len(parts) >= 2 and not (is_shortcut_1 or is_shortcut_2):
+            short_id = parts[1].strip()
+            rejection_reason = parts[2].strip() if len(parts) > 2 else None
 
-        if action == "REJEITAR" and not rejection_reason:
+        # Se for atalho ("1" ou "2" ou "APROVAR" sem ID), busca se existe exatamente 1 despesa pendente
+        if not short_id:
+            pending_query = select(Expense).where(
+                Expense.company_id == company.id,
+                Expense.status == ExpenseStatus.PENDING
+            )
+            pending_res = await db.execute(pending_query)
+            pending_list = pending_res.scalars().all()
+
+            if not pending_list:
+                await wuzapi_client.send_text_message(phone, "❌ Não há nenhuma despesa pendente de aprovação no momento.")
+                return {"status": "ok"}
+            elif len(pending_list) == 1:
+                exp = pending_list[0]
+                short_id = exp.id[:4]
+                if action == "REJEITAR" and not rejection_reason:
+                    rejection_reason = "Não atende às políticas da empresa"
+            else:
+                msg = f"📋 Existem {len(pending_list)} despesas pendentes. Por favor informe o ID de 4 dígitos:\n"
+                for p in pending_list[:5]:
+                    msg += f"• *{action} {p.id[:4]}*\n"
+                await wuzapi_client.send_text_message(phone, msg)
+                return {"status": "ok"}
+
+        if action == "REJEITAR" and not rejection_reason and len(parts) > 1:
             await wuzapi_client.send_text_message(phone, f"❌ Para rejeitar, você deve informar um motivo.\nExemplo: *REJEITAR {short_id} Valor acima do teto*")
             return {"status": "ok"}
 
@@ -156,23 +184,76 @@ class CommandHandler:
         exp.approved_at = datetime.now(timezone.utc)
         
         if action == "REJEITAR":
-            exp.rejection_reason = rejection_reason
+            exp.rejection_reason = rejection_reason or "Rejeitado pelo gestor"
 
         await db.commit()
         
-        # Notify employee
-        employee_msg = f"🔔 **Sua despesa foi {new_status.value}**\n📍 {exp.merchant_name} (R$ {exp.amount:.2f})\n"
+        # Notifica o funcionário
+        employee_msg = f"🔔 **Sua despesa foi {new_status.value}!**\n📍 {exp.merchant_name} (R$ {exp.amount:.2f})\n"
         if action == "REJEITAR":
-            employee_msg += f"❌ **Motivo:** {rejection_reason}"
+            employee_msg += f"❌ **Motivo:** {exp.rejection_reason}"
         else:
-            employee_msg += "✅ Aprovada pelo gestor."
+            employee_msg += "✅ Reembolso autorizado pelo gestor."
             
         await wuzapi_client.send_text_message(exp.user_phone, employee_msg)
 
         await wuzapi_client.send_text_message(
             phone,
-            f"✅ **Despesa {new_status.value}!** O funcionário foi notificado."
+            f"✅ **Despesa de {exp.merchant_name} (R$ {exp.amount:.2f}) {new_status.value}!** O funcionário foi notificado."
         )
+        return {"status": "ok"}
+
+    async def handle_aceitar_recusar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        """Permite que o gestor aceite ou recuse a solicitação de um funcionário."""
+        if user.role != UserRole.ADMIN:
+            await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aceitar ou recusar funcionários.")
+            return {"status": "ok"}
+
+        parts = clean_text.split()
+        if len(parts) < 2:
+            await wuzapi_client.send_text_message(phone, "❌ Formato incorreto. Use: *ACEITAR [telefone]* ou *RECUSAR [telefone]*")
+            return {"status": "ok"}
+
+        action = parts[0].upper()
+        target_phone = parts[1].replace("+", "").replace("-", "").strip()
+
+        # Busca o usuário pendente
+        user_query = select(User).where(
+            User.phone.like(f"%{target_phone}%"),
+            User.company_id == company.id
+        )
+        user_res = await db.execute(user_query)
+        target_user = user_res.scalars().first()
+
+        if not target_user:
+            await wuzapi_client.send_text_message(phone, f"❌ Funcionário com número `{target_phone}` não foi encontrado.")
+            return {"status": "ok"}
+
+        if action == "ACEITAR":
+            target_user.is_approved = True
+            target_user.onboarding_step = None
+            await db.commit()
+
+            # Notifica o funcionário
+            welcome_employee = (
+                f"🎉 **Seu cadastro na empresa {company.name} foi APROVADO!**\n\n"
+                f"👤 **Nome:** {target_user.name}\n"
+                f"🏢 **Setor:** {target_user.department or 'Geral'}\n"
+                f"💼 **Cargo:** {target_user.job_title or 'Funcionário'}\n\n"
+                f"📸 A partir de agora, envie qualquer foto de **cupom fiscal ou recibo** aqui para registrar seu reembolso!"
+            )
+            await wuzapi_client.send_text_message(target_user.phone, welcome_employee)
+            await wuzapi_client.send_text_message(phone, f"✅ Funcionário **{target_user.name}** ({target_user.department or 'Geral'}) foi **APROVADO** com sucesso!")
+
+        elif action == "RECUSAR":
+            target_user.company_id = None
+            target_user.is_approved = False
+            target_user.onboarding_step = None
+            await db.commit()
+
+            await wuzapi_client.send_text_message(target_user.phone, f"❌ Sua solicitação de vínculo com a empresa **{company.name}** foi recusada pelo gestor.")
+            await wuzapi_client.send_text_message(phone, f"❌ Solicitação de **{target_user.name}** foi recusada.")
+
         return {"status": "ok"}
 
     async def handle_limite(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:

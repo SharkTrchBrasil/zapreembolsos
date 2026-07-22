@@ -108,16 +108,25 @@ class ExpenseService:
             # Notifica o Gestor (se estiver pendente)
             if new_expense.status == ExpenseStatus.PENDING and company and company.admin_phone and company.admin_phone != phone:
                 receipt_url = storage_service.generate_presigned_url(s3_key)
-                admin_alert = (
-                    f"📥 **[Aviso Gestor ZapReembolso - {company.name}]**\n"
-                    f"Nova despesa enviada por **{user.name or phone}**:\n\n"
-                    f"🏢 **Local:** {new_expense.merchant_name}\n"
-                    f"💰 **Valor:** R$ {new_expense.amount:.2f} ({category_enum.value})\n"
-                    f"🔗 **Ver Comprovante:** {receipt_url}\n"
-                    f"{'⚠️ *Alerta: Possível Despesa Duplicada!*' if is_duplicate else ''}\n\n"
-                    f"Responda *APROVAR {new_expense.id[:4]}* para autorizar ou *REJEITAR {new_expense.id[:4]} [motivo]* para negar."
+                
+                # Monta detalhes ricos do funcionário
+                user_desc = user.name or phone
+                if user.job_title or user.department:
+                    user_desc += f" ({user.job_title or 'Funcionário'} - {user.department or 'Geral'})"
+
+                caption = (
+                    f"📥 *[Aviso Gestor ZapReembolso - {company.name}]*\n"
+                    f"Nova despesa enviada por *{user_desc}*:\n\n"
+                    f"🏢 *Local:* {new_expense.merchant_name}\n"
+                    f"💰 *Valor:* R$ {new_expense.amount:.2f} ({category_enum.value})\n"
+                    f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"
+                    f"{'⚠️ *Alerta: Possível Despesa Duplicada!*' if is_duplicate else ''}\n"
+                    f"----------------------------------\n"
+                    f"Responda este chat para decidir:\n"
+                    f"✅ *APROVAR {new_expense.id[:4]}* (ou apenas *1*)\n"
+                    f"❌ *REJEITAR {new_expense.id[:4]} [motivo]* (ou apenas *2*)"
                 )
-                await wuzapi_client.send_text_message(company.admin_phone, admin_alert)
+                await wuzapi_client.send_image_message(company.admin_phone, receipt_url, caption)
             elif new_expense.status == ExpenseStatus.REJECTED:
                 # Notifica o usuário sobre a política
                 await wuzapi_client.send_text_message(
