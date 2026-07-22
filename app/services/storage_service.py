@@ -5,12 +5,15 @@ from app.config import settings
 
 class StorageService:
     def __init__(self):
-        # Utiliza boto3 com credentials puxadas do environment via pydantic
+        # Limpeza de credenciais para evitar erros de aspas ou espaços vindos do .env/Coolify
+        aws_access_key = settings.AWS_ACCESS_KEY_ID.strip().strip('"').strip("'") if settings.AWS_ACCESS_KEY_ID else None
+        aws_secret_key = settings.AWS_SECRET_ACCESS_KEY.strip().strip('"').strip("'") if settings.AWS_SECRET_ACCESS_KEY else None
+
         self.s3_client = boto3.client(
             's3',
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID or None,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY or None,
-            region_name=settings.AWS_REGION
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=settings.AWS_REGION.strip().strip('"').strip("'") if settings.AWS_REGION else "us-east-1"
         )
         self.bucket_name = settings.AWS_S3_BUCKET
 
