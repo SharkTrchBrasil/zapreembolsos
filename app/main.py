@@ -13,18 +13,27 @@ scheduler = AsyncIOScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await init_db()
-    
-    # Agenda o Job de Lembretes Diários para rodar todo dia às 08:00 AM
-    scheduler.add_job(run_daily_reminder_job, 'cron', hour=8, minute=0)
-    scheduler.start()
-    print("🚀 ZapReembolso API iniciada e Scheduler ativo!")
+    # Startup seguro com captura de exceções para garantir que a API nunca caia no boot
+    try:
+        await init_db()
+        print("✅ Banco de dados inicializado com sucesso!")
+    except Exception as e:
+        print(f"⚠️ Alerta: Erro ao inicializar banco de dados no startup: {e}")
+
+    try:
+        scheduler.add_job(run_daily_reminder_job, 'cron', hour=8, minute=0)
+        scheduler.start()
+        print("🚀 ZapReembolso API iniciada e Scheduler ativo!")
+    except Exception as e:
+        print(f"⚠️ Alerta: Erro ao iniciar Scheduler: {e}")
     
     yield
     
     # Shutdown
-    scheduler.shutdown()
+    try:
+        scheduler.shutdown()
+    except Exception:
+        pass
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -33,6 +42,10 @@ app = FastAPI(
 )
 
 app.include_router(webhook.router)
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "app": settings.PROJECT_NAME}
 
 @app.get("/")
 async def root():
