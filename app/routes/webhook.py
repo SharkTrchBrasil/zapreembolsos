@@ -1,11 +1,12 @@
 import uuid
 import random
-import string
 from datetime import datetime, date
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
+from app.config import settings
 from app.models import User, Company, Expense, UserRole, ExpenseCategory, ExpenseStatus, PlanType
 from app.services.wuzapi_service import wuzapi_client
 from app.services.ocr_service import ocr_service
@@ -15,13 +16,19 @@ router = APIRouter(prefix="/webhook", tags=["Webhook"])
 def generate_company_code(name: str) -> str:
     """Gera um código único curto como #ALFA1 ou #POSTO7."""
     clean_name = "".join(c for c in name if c.isalnum()).upper()[:4]
-    random_num = random.randint(10, 99)
+    random_num = random.randint(10, 999)
     return f"{clean_name}{random_num}"
 
 @router.post("/wuzapi")
-async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
     """Recebe mensagens do WuzAPI e orquestra o onboarding e gestão de comprovantes."""
-    data = await request.json()
+    if token != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized webhook token")
+
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     phone = data.get("Phone") or data.get("from")
     text = data.get("Body") or data.get("text", "")
@@ -51,16 +58,24 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
             await wuzapi_client.send_text_message(phone, "❌ Por favor, informe o nome da sua empresa. Exemplo: *CRIAR Construtora Alfa*")
             return {"status": "ok"}
 
-        code = generate_company_code(company_name)
-        new_company = Company(
-            id=str(uuid.uuid4()),
-            code=code,
-            name=company_name,
-            admin_phone=phone,
-            plan=PlanType.FREE_TRIAL
-        )
-        db.add(new_company)
-        await db.commit()
+        for attempt in range(5):
+            code = generate_company_code(company_name)
+            new_company = Company(
+                id=str(uuid.uuid4()),
+                code=code,
+                name=company_name,
+                admin_phone=phone,
+                plan=PlanType.FREE_TRIAL
+            )
+            db.add(new_company)
+            try:
+                await db.commit()
+                break
+            except IntegrityError:
+                await db.rollback()
+        else:
+            await wuzapi_client.send_text_message(phone, "❌ Erro ao criar empresa (conflito de código). Tente outro nome.")
+            return {"status": "error"}
 
         user.company_id = new_company.id
         user.role = UserRole.ADMIN
@@ -74,7 +89,7 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
             f"Envie este contato para seus funcionários e peça para eles mandarem `#{code}` no primeiro acesso para se vincularem!\n\n"
             f"💡 **Seus Comandos:**\n"
             f"• Envie *RELATORIO* para ver gastos do mês.\n"
-            f"• Envie *APROVAR* para dar baixa em reembolso."
+            f"• Envie *APROVAR [ID]* para dar baixa em reembolso."
         )
         await wuzapi_client.send_text_message(phone, welcome_admin)
         return {"status": "ok"}
@@ -119,12 +134,16 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
     company = comp_res.scalar_one_or_none()
 
     # 5. Comando "RELATORIO"
-    if "RELATORIO" in clean_text.upper():
+    if clean_text.upper() == "RELATORIO":
         if not company:
             await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
             return {"status": "ok"}
 
-        exp_query = select(Expense).where(Expense.company_id == company.id)
+        today = date.today()
+        exp_query = select(Expense).where(
+            Expense.company_id == company.id,
+            Expense.expense_date >= today.replace(day=1)
+        )
         exp_res = await db.execute(exp_query)
         all_expenses = exp_res.scalars().all()
 
@@ -135,46 +154,77 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
         by_category = {}
         for e in all_expenses:
             cat_name = e.category.value if hasattr(e.category, 'value') else str(e.category)
-            by_category[cat_name] = by_category.get(cat_name, 0.0) + e.amount
+            by_category[cat_name] = by_category.get(cat_name, 0.0) + float(e.amount)
 
         cat_summary = "\n".join([f"• **{cat}:** R$ {amt:.2f}" for cat, amt in by_category.items()]) or "Nenhuma despesa"
 
         report_msg = (
-            f"📊 **Resumo de Despesas - {company.name}**\n\n"
+            f"📊 **Resumo de Despesas - Mês Atual ({today.strftime('%m/%Y')})**\n\n"
             f"💰 **Total Acumulado:** R$ {total_amount:.2f} ({len(all_expenses)} comprovantes)\n"
             f"✅ **Aprovadas:** R$ {sum(e.amount for e in approved_expenses):.2f}\n"
             f"⏳ **Pendentes de Aprovação:** {len(pending_expenses)} (R$ {sum(e.amount for e in pending_expenses):.2f})\n\n"
             f"🏷️ **Por Categoria:**\n{cat_summary}\n\n"
-            f"💡 Responda *APROVAR* para aprovar as pendentes."
         )
+        
+        if pending_expenses and user.role == UserRole.ADMIN:
+            report_msg += "📋 **Pendentes:**\n"
+            for p in pending_expenses:
+                report_msg += f"- [{p.id[:4]}] {p.merchant_name} (R$ {p.amount:.2f})\n"
+            report_msg += "\n💡 Responda *APROVAR [ID]* ou *REJEITAR [ID]*."
+
         await wuzapi_client.send_text_message(phone, report_msg)
         return {"status": "ok"}
 
-    # 6. Comando "APROVAR"
-    if clean_text.upper().startswith("APROVAR"):
-        exp_query = select(Expense).where(
-            Expense.company_id == user.company_id,
-            Expense.status == ExpenseStatus.PENDING
-        )
+    # 6. Comando "APROVAR" e "REJEITAR"
+    if clean_text.upper().startswith("APROVAR") or clean_text.upper().startswith("REJEITAR"):
+        if user.role != UserRole.ADMIN:
+            await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aprovar ou rejeitar despesas.")
+            return {"status": "ok"}
+            
+        action = "APROVAR" if clean_text.upper().startswith("APROVAR") else "REJEITAR"
+        new_status = ExpenseStatus.APPROVED if action == "APROVAR" else ExpenseStatus.REJECTED
+        parts = clean_text.split()
+        
+        if len(parts) > 1:
+            short_id = parts[1].strip()
+            exp_query = select(Expense).where(
+                Expense.company_id == user.company_id,
+                Expense.status == ExpenseStatus.PENDING,
+                Expense.id.like(f"{short_id}%")
+            )
+        else:
+            exp_query = select(Expense).where(
+                Expense.company_id == user.company_id,
+                Expense.status == ExpenseStatus.PENDING
+            )
+            
         exp_res = await db.execute(exp_query)
         pending_list = exp_res.scalars().all()
 
         if not pending_list:
-            await wuzapi_client.send_text_message(phone, "🎉 Nenhuma despesa pendente de aprovação no momento!")
+            await wuzapi_client.send_text_message(phone, "🎉 Nenhuma despesa pendente correspondente encontrada!")
             return {"status": "ok"}
 
         for exp in pending_list:
-            exp.status = ExpenseStatus.APPROVED
+            exp.status = new_status
         
         await db.commit()
         await wuzapi_client.send_text_message(
             phone,
-            f"✅ **{len(pending_list)} despesas aprovadas com sucesso!** Relatório atualizado."
+            f"✅ **{len(pending_list)} despesas atualizadas para {new_status.value}!** Relatório atualizado."
         )
         return {"status": "ok"}
 
     # 7. Processamento de Imagem (Cupom Fiscal / Recibo)
     if image_base64:
+        if company and company.plan == PlanType.FREE_TRIAL:
+            count_query = select(func.count(Expense.id)).where(Expense.company_id == company.id)
+            count_res = await db.execute(count_query)
+            expense_count = count_res.scalar_one()
+            if expense_count >= 10:
+                await wuzapi_client.send_text_message(phone, "❌ **Limite do plano Free Trial atingido (10 comprovantes).**\nAssine o plano Pro para continuar enviando.")
+                return {"status": "ok"}
+
         await wuzapi_client.send_text_message(phone, "🔍 Lendo os dados do seu recibo com IA... Aguarde alguns segundos!")
         try:
             parsed = await ocr_service.extract_receipt_from_image_base64(image_base64)
@@ -217,7 +267,7 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
                     f"Nova despesa enviada por **{user.name or phone}**:\n\n"
                     f"🏢 **Local:** {new_expense.merchant_name}\n"
                     f"💰 **Valor:** R$ {new_expense.amount:.2f} ({category_enum.value})\n\n"
-                    f"Responda *APROVAR* para autorizar o reembolso."
+                    f"Responda *APROVAR {new_expense.id[:4]}* para autorizar ou *REJEITAR {new_expense.id[:4]}* para negar."
                 )
                 await wuzapi_client.send_text_message(company.admin_phone, admin_alert)
 
@@ -227,5 +277,18 @@ async def handle_wuzapi_webhook(request: Request, db: AsyncSession = Depends(get
                 phone, 
                 "❌ Não consegui ler os dados dessa imagem. Certifique-se de que a foto da nota fiscal está nítida e bem iluminada."
             )
+        return {"status": "ok"}
+
+    # 8. Mensagem não reconhecida (Fallback / Ajuda)
+    if clean_text:
+        help_msg = (
+            "🤖 **Comandos Disponíveis:**\n\n"
+            "📸 *Envie foto de cupom fiscal* para registrar.\n"
+            "📊 *RELATORIO* - Resumo do mês.\n"
+        )
+        if user.role == UserRole.ADMIN:
+            help_msg += "✅ *APROVAR [ID]* - Aprovar despesa.\n"
+            help_msg += "❌ *REJEITAR [ID]* - Rejeitar despesa.\n"
+        await wuzapi_client.send_text_message(phone, help_msg)
 
     return {"status": "ok"}

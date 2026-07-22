@@ -49,12 +49,20 @@ class OCRService:
             max_tokens=350
         )
 
-        content = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Resposta vazia da IA.")
+            
+        content = content.strip()
         if content.startswith("```json"):
             content = content.replace("```json", "").replace("```", "").strip()
         elif content.startswith("```"):
             content = content.replace("```", "").strip()
         
-        return json.loads(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            print(f"[OCR Error] JSON inválido retornado pela IA: {e}")
+            raise ValueError("Não foi possível extrair os dados da imagem (JSON inválido).")
 
 ocr_service = OCRService()

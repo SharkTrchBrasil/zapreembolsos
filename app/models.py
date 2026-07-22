@@ -1,6 +1,6 @@
 import enum
-from datetime import datetime, date
-from sqlalchemy import String, Float, Date, DateTime, Enum, ForeignKey, Text
+from datetime import datetime, date, timezone
+from sqlalchemy import String, Float, Numeric, Date, DateTime, Enum, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -35,7 +35,7 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(100))
     admin_phone: Mapped[str] = mapped_column(String(30)) # Telefone do Gestor Principal
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     users: Mapped[list["User"]] = relationship(back_populates="company", cascade="all, delete-orphan")
     expenses: Mapped[list["Expense"]] = relationship(back_populates="company", cascade="all, delete-orphan")
@@ -47,7 +47,7 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     company_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("companies.id"), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     company: Mapped["Company | None"] = relationship(back_populates="users")
     expenses: Mapped[list["Expense"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -60,12 +60,12 @@ class Expense(Base):
     company_id: Mapped[str] = mapped_column(String(36), ForeignKey("companies.id"))
     merchant_name: Mapped[str] = mapped_column(String(150)) # Nome do posto, restaurante, etc.
     merchant_cnpj: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    amount: Mapped[float] = mapped_column(Float)
+    amount: Mapped[float] = mapped_column(Numeric(10, 2))
     expense_date: Mapped[date] = mapped_column(Date)
     category: Mapped[ExpenseCategory] = mapped_column(Enum(ExpenseCategory), default=ExpenseCategory.OUTROS)
     status: Mapped[ExpenseStatus] = mapped_column(Enum(ExpenseStatus), default=ExpenseStatus.PENDING)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user: Mapped["User"] = relationship(back_populates="expenses")
     company: Mapped["Company"] = relationship(back_populates="expenses")
