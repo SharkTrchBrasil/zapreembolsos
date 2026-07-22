@@ -15,9 +15,49 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=As
 class Base(DeclarativeBase):
     pass
 
+from sqlalchemy import text
+
 async def init_db():
     async with engine.begin() as conn:
+        # Cria as tabelas caso ainda não existam
         await conn.run_sync(Base.metadata.create_all)
+
+        # Garante que todas as colunas novas sejam adicionadas em tabelas pré-existentes no PostgreSQL
+        migration_sqls = [
+            # Tabela users
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(100);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(50);",
+
+            # Tabela companies
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS admin_name VARCHAR(100);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS cnpj VARCHAR(20);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS estimated_employees VARCHAR(50);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(100);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(50);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS km_rate NUMERIC(10, 2);",
+
+            # Tabela expenses
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS image_s3_key VARCHAR(255);",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS ocr_confidence FLOAT;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS ocr_raw_data TEXT;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS nfce_access_key VARCHAR(50);",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS is_duplicate_suspect BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS justification TEXT;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_by VARCHAR(30);",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP WITH TIME ZONE;",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN DEFAULT TRUE;"
+        ]
+
+        print("🔄 Executando verificação de colunas e migrações do banco de dados...")
+        for sql in migration_sqls:
+            try:
+                await conn.execute(text(sql))
+            except Exception as e:
+                print(f"⚠️ Aviso na migração: {e}")
+        print("✅ Banco de dados e schemas verificados com sucesso!")
 
 async def get_db():
     async with AsyncSessionLocal() as session:
