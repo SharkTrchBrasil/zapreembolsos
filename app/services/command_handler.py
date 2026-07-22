@@ -209,24 +209,51 @@ class CommandHandler:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aceitar ou recusar funcionários.")
             return {"status": "ok"}
 
+        raw_cmd = clean_text.upper().strip()
         parts = clean_text.split()
-        if len(parts) < 2:
-            await wuzapi_client.send_text_message(phone, "❌ Formato incorreto. Use: *ACEITAR [telefone]* ou *RECUSAR [telefone]*")
-            return {"status": "ok"}
+        
+        is_shortcut_1 = raw_cmd in ["1", "ACEITAR", "APROVAR"]
+        is_shortcut_2 = raw_cmd in ["2", "RECUSAR", "NEGAR"]
 
-        action = parts[0].upper()
-        target_phone = parts[1].replace("+", "").replace("-", "").strip()
+        action = "ACEITAR" if (raw_cmd.startswith("ACEITAR") or is_shortcut_1) else "RECUSAR"
+        target_phone = parts[1].replace("+", "").replace("-", "").strip() if len(parts) >= 2 else None
 
-        # Busca o usuário pendente
-        user_query = select(User).where(
-            User.phone.like(f"%{target_phone}%"),
-            User.company_id == company.id
-        )
-        user_res = await db.execute(user_query)
-        target_user = user_res.scalars().first()
+        target_user = None
+
+        if target_phone:
+            # Limpa dígitos para busca flexível pelos últimos 8 ou 9 dígitos
+            clean_digits = "".join(c for c in target_phone if c.isdigit())
+            search_digits = clean_digits[-8:] if len(clean_digits) >= 8 else clean_digits
+
+            user_query = select(User).where(
+                User.phone.like(f"%{search_digits}%"),
+                User.company_id == company.id
+            )
+            user_res = await db.execute(user_query)
+            target_user = user_res.scalars().first()
+        else:
+            # Se não informou o telefone, busca se há exatamente 1 funcionário pendente
+            pending_query = select(User).where(
+                User.company_id == company.id,
+                User.is_approved == False
+            )
+            pending_res = await db.execute(pending_query)
+            pending_users = pending_res.scalars().all()
+
+            if not pending_users:
+                await wuzapi_client.send_text_message(phone, "❌ Não há nenhuma solicitação de cadastro de funcionário pendente no momento.")
+                return {"status": "ok"}
+            elif len(pending_users) == 1:
+                target_user = pending_users[0]
+            else:
+                msg = f"📋 Existem {len(pending_users)} funcionários aguardando aprovação. Por favor, responda com o número do telefone:\n\n"
+                for u in pending_users:
+                    msg += f"• *{action} {u.phone}* ({u.name} - {u.department or 'Geral'})\n"
+                await wuzapi_client.send_text_message(phone, msg)
+                return {"status": "ok"}
 
         if not target_user:
-            await wuzapi_client.send_text_message(phone, f"❌ Funcionário com número `{target_phone}` não foi encontrado.")
+            await wuzapi_client.send_text_message(phone, f"❌ Funcionário com telefone `{target_phone}` não foi encontrado nas solicitações pendentes.")
             return {"status": "ok"}
 
         if action == "ACEITAR":
@@ -236,14 +263,14 @@ class CommandHandler:
 
             # Notifica o funcionário
             welcome_employee = (
-                f"🎉 **Seu cadastro na empresa {company.name} foi APROVADO!**\n\n"
-                f"👤 **Nome:** {target_user.name}\n"
-                f"🏢 **Setor:** {target_user.department or 'Geral'}\n"
-                f"💼 **Cargo:** {target_user.job_title or 'Funcionário'}\n\n"
-                f"📸 A partir de agora, envie qualquer foto de **cupom fiscal ou recibo** aqui para registrar seu reembolso!"
+                f"🎉 *Seu cadastro na empresa {company.name} foi APROVADO!*\n\n"
+                f"👤 *Nome:* {target_user.name}\n"
+                f"🏢 *Setor:* {target_user.department or 'Geral'}\n"
+                f"💼 *Cargo:* {target_user.job_title or 'Funcionário'}\n\n"
+                f"📸 A partir de agora, envie qualquer foto de *cupom fiscal ou recibo* aqui para registrar seu reembolso!"
             )
             await wuzapi_client.send_text_message(target_user.phone, welcome_employee)
-            await wuzapi_client.send_text_message(phone, f"✅ Funcionário **{target_user.name}** ({target_user.department or 'Geral'}) foi **APROVADO** com sucesso!")
+            await wuzapi_client.send_text_message(phone, f"✅ Funcionário *{target_user.name}* ({target_user.department or 'Geral'}) foi *APROVADO* com sucesso!")
 
         elif action == "RECUSAR":
             target_user.company_id = None
@@ -251,8 +278,8 @@ class CommandHandler:
             target_user.onboarding_step = None
             await db.commit()
 
-            await wuzapi_client.send_text_message(target_user.phone, f"❌ Sua solicitação de vínculo com a empresa **{company.name}** foi recusada pelo gestor.")
-            await wuzapi_client.send_text_message(phone, f"❌ Solicitação de **{target_user.name}** foi recusada.")
+            await wuzapi_client.send_text_message(target_user.phone, f"❌ Sua solicitação de vínculo com a empresa *{company.name}* foi recusada pelo gestor.")
+            await wuzapi_client.send_text_message(phone, f"❌ Solicitação de *{target_user.name}* foi recusada.")
 
         return {"status": "ok"}
 

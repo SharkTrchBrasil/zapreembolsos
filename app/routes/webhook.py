@@ -253,11 +253,20 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         elif user.onboarding_step == "EMP_CODE":
             raw_input = clean_text.replace("#", "").replace("+", "").replace("-", "").strip()
             
-            comp_query = select(Company).where(
-                (Company.code == raw_input.upper()) | (Company.admin_phone.like(f"%{raw_input}%"))
-            )
+            # Limpa dígitos para busca flexível do telefone (com ou sem DDD, com ou sem 9º dígito, com ou sem DDI 55)
+            clean_digits = "".join(c for c in raw_input if c.isdigit())
+            search_digits = clean_digits[-8:] if len(clean_digits) >= 8 else clean_digits
+
+            if search_digits:
+                comp_query = select(Company).where(
+                    (Company.code == raw_input.upper()) | 
+                    (Company.admin_phone.like(f"%{search_digits}%"))
+                )
+            else:
+                comp_query = select(Company).where(Company.code == raw_input.upper())
+
             comp_res = await db.execute(comp_query)
-            target_company = comp_res.scalar_one_or_none()
+            target_company = comp_res.scalars().first()
 
             if target_company:
                 user.company_id = target_company.id
@@ -266,7 +275,7 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                 user.onboarding_step = None
                 await db.commit()
 
-                # Notifica o Gestor no WhatsApp
+                # Notifica o Gestor no WhatsApp com atalhos 1 e 2
                 admin_alert = (
                     f"👤 *[Solicitação de Cadastro - ZapReembolso]*\n"
                     f"Um novo funcionário solicitou vínculo à sua empresa:\n\n"
@@ -277,8 +286,8 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                     f"📱 *WhatsApp:* {user.phone}\n\n"
                     f"----------------------------------\n"
                     f"Responda este chat para autorizar:\n"
-                    f"✅ *ACEITAR {user.phone}*\n"
-                    f"❌ *RECUSAR {user.phone}*"
+                    f"✅ *ACEITAR {user.phone}* (ou digite apenas *1*)\n"
+                    f"❌ *RECUSAR {user.phone}* (ou digite apenas *2*)"
                 )
                 await wuzapi_client.send_text_message(target_company.admin_phone, admin_alert)
 
