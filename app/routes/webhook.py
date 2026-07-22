@@ -10,6 +10,8 @@ from app.config import settings
 from app.models import User, Company, Expense, UserRole, ExpenseCategory, ExpenseStatus, PlanType
 from app.services.wuzapi_service import wuzapi_client
 from app.services.ocr_service import ocr_service
+from app.services.chatbot_service import chatbot_service
+from app.services.humanizer_service import send_humanized_message
 
 router = APIRouter(prefix="/webhook", tags=["Webhook"])
 
@@ -279,16 +281,22 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             )
         return {"status": "ok"}
 
-    # 8. Mensagem não reconhecida (Fallback / Ajuda)
+    # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
     if clean_text:
-        help_msg = (
-            "🤖 **Comandos Disponíveis:**\n\n"
-            "📸 *Envie foto de cupom fiscal* para registrar.\n"
-            "📊 *RELATORIO* - Resumo do mês.\n"
-        )
+        # Gera resposta com Gemini
+        ai_response = await chatbot_service.generate_response(clean_text)
+        
+        # Se for Admin, podemos anexar os comandos no final da resposta da IA como lembrete rápido
         if user.role == UserRole.ADMIN:
-            help_msg += "✅ *APROVAR [ID]* - Aprovar despesa.\n"
-            help_msg += "❌ *REJEITAR [ID]* - Rejeitar despesa.\n"
-        await wuzapi_client.send_text_message(phone, help_msg)
+            admin_tips = (
+                "\n\n🤖 *Dica de Gestor:*\n"
+                "- `RELATORIO`\n"
+                "- `APROVAR [ID]`\n"
+                "- `REJEITAR [ID]`"
+            )
+            ai_response += admin_tips
+            
+        # Envia de forma humanizada (typing indicator + delay proporcional)
+        await send_humanized_message(phone, ai_response)
 
     return {"status": "ok"}

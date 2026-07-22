@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = "change_me_in_production"
     
     OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

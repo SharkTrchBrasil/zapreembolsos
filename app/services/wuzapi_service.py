@@ -24,4 +24,20 @@ class WuzAPIService:
                 print(f"[WuzAPI Error] Falha ao enviar mensagem para {phone}: {e}")
                 return False
 
+    async def send_typing_indicator(self, phone: str, is_typing: bool = True) -> bool:
+        """Envia indicador de 'digitando...' para o contato."""
+        url = f"{self.base_url}/chat/presence"
+        payload = {
+            "Phone": phone,
+            "State": "composing" if is_typing else "paused",
+            "Media": ""
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, json=payload, headers=self.headers, timeout=5.0)
+                return response.status_code in [200, 201]
+            except Exception as e:
+                print(f"[WuzAPI Error] Falha ao enviar typing_indicator para {phone}: {e}")
+                return False
+
 wuzapi_client = WuzAPIService()
