@@ -10,13 +10,27 @@ logger = logging.getLogger("ocr_service")
 
 class OCRService:
     def __init__(self):
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
+        self.clients = []
+        
+        # Chave principal
+        if settings.GEMINI_API_KEY:
+            self.clients.append(genai.Client(api_key=settings.GEMINI_API_KEY))
+            
+        # Fallbacks configurados via .env (separados por vírgula)
+        if hasattr(settings, 'GEMINI_FALLBACK_KEYS') and settings.GEMINI_FALLBACK_KEYS:
+            keys = [k.strip() for k in settings.GEMINI_FALLBACK_KEYS.split(",") if k.strip()]
+            for k in keys:
+                self.clients.append(genai.Client(api_key=k))
+                
+        # Aviso: Não é seguro hardcodar chaves de API no código.
+        # Por favor, use a variável GEMINI_FALLBACK_KEYS no arquivo .env
+        pass
 
     async def extract_receipt_from_image_base64(self, image_base64: str) -> dict:
         """Usa Gemini 2.5 Flash Vision para ler cupons fiscais, recibos e notas fiscais."""
-        if not self.client:
+        if not self.clients:
             # Fallback para testes se GEMINI_API_KEY não estiver preenchida
-            logger.warning("GEMINI_API_KEY não configurada. Usando fallback.")
+            logger.warning("Nenhuma chave de API configurada. Usando fallback.")
             return {
                 "merchant_name": "Posto Shell Marginal (Teste)",
                 "merchant_cnpj": "12.345.678/0001-90",
@@ -40,26 +54,31 @@ class OCRService:
 
         image_bytes = base64.b64decode(image_base64)
         models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        
         content = None
         last_error = None
 
-        for model_name in models_to_try:
-            try:
-                logger.info(f"Tentando extração com modelo {model_name}...")
-                response = await self.client.aio.models.generate_content(
-                    model=model_name,
-                    contents=[
-                        prompt,
-                        types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-                    ]
-                )
-                content = response.text
-                if content:
-                    logger.info(f"Sucesso com o modelo {model_name}!")
-                    break
-            except Exception as e:
-                logger.warning(f"Falha no modelo {model_name}: {e}")
-                last_error = e
+        for current_client in self.clients:
+            for model_name in models_to_try:
+                try:
+                    logger.info(f"Tentando extração com modelo {model_name}...")
+                    response = await current_client.aio.models.generate_content(
+                        model=model_name,
+                        contents=[
+                            prompt,
+                            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+                        ]
+                    )
+                    content = response.text
+                    if content:
+                        logger.info(f"Sucesso com o modelo {model_name}!")
+                        break
+                except Exception as e:
+                    logger.warning(f"Falha no modelo {model_name} com cliente atual: {e}")
+                    last_error = e
+            
+            if content:
+                break
 
         if not content:
             raise ValueError(f"Não foi possível processar a imagem com IA: {last_error}")

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    GEMINI_FALLBACK_KEYS: str = ""
     
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
