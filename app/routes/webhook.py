@@ -167,27 +167,32 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     if was_reset:
         return {"status": "ok"}
 
-    # 2. Comando do Gestor para Aprovar/Recusar cadastro de funcionário (Suporta 1, 01, 2, 02, ACEITAR, RECUSAR)
+    # 2. Comando do Gestor para Aprovação/Recusa (Suporta 1, 01, 2, 02, ACEITAR, RECUSAR, APROVAR, REJEITAR)
     raw_upper = clean_text.upper().strip()
     if user.role == UserRole.ADMIN and user.company_id:
-        if raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR") or raw_upper in ["1", "01", "2", "02"]:
+        is_user_cmd = raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR")
+        is_exp_cmd = raw_upper.startswith("APROVAR") or raw_upper.startswith("REJEITAR")
+        is_shortcut = raw_upper in ["1", "01", "2", "02"]
+
+        if is_user_cmd or is_exp_cmd or is_shortcut:
             comp_query = select(Company).where(Company.id == user.company_id)
             comp_res = await db.execute(comp_query)
             company = comp_res.scalar_one_or_none()
             if company:
-                pending_users_query = select(User).where(User.company_id == company.id, User.is_approved == False)
-                pending_users_res = await db.execute(pending_users_query)
-                has_pending_users = len(pending_users_res.scalars().all()) > 0
-                
-                is_shortcut = raw_upper in ["1", "01", "2", "02"]
-                
-                if is_shortcut and has_pending_users:
-                    # Verifica se há despesas pendentes para evitar conflito de atalho
+                if is_user_cmd:
+                    return await command_handler.handle_aceitar_recusar(clean_text, phone, user, company, db)
+                elif is_exp_cmd:
+                    return await command_handler.handle_aprovar_rejeitar(clean_text, phone, user, company, db)
+                elif is_shortcut:
+                    pending_users_query = select(User).where(User.company_id == company.id, User.is_approved == False)
+                    pending_users_res = await db.execute(pending_users_query)
+                    has_pending_users = len(pending_users_res.scalars().all()) > 0
+
                     pending_expenses_query = select(Expense).where(Expense.company_id == company.id, Expense.status == ExpenseStatus.PENDING)
                     pending_expenses_res = await db.execute(pending_expenses_query)
                     has_pending_expenses = len(pending_expenses_res.scalars().all()) > 0
-                    
-                    if has_pending_expenses:
+
+                    if has_pending_users and has_pending_expenses:
                         await wuzapi_client.send_text_message(
                             phone, 
                             "⚠️ Você tem **funcionários** e **despesas** aguardando aprovação.\n\n"
@@ -196,9 +201,9 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
                             "• Para aprovar despesa: *APROVAR [ID]*"
                         )
                         return {"status": "ok"}
-                
-                if has_pending_users or raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR"):
-                    if is_shortcut or raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR"):
+                    elif has_pending_expenses:
+                        return await command_handler.handle_aprovar_rejeitar(clean_text, phone, user, company, db)
+                    elif has_pending_users:
                         return await command_handler.handle_aceitar_recusar(clean_text, phone, user, company, db)
 
     # 3. MÁQUINA DE ESTADOS DO LEAD (Onboarding iugu-Style)
