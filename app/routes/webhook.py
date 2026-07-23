@@ -387,7 +387,7 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
     # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
     if clean_text:
-        ai_response = await chatbot_service.generate_response(clean_text)
+        ai_response = await chatbot_service.generate_response(clean_text, user_role=user.role.value if user else None)
         
         if user.role == UserRole.ADMIN:
             admin_tips = (

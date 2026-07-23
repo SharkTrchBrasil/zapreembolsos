@@ -53,24 +53,36 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
         except Exception as e:
             logger.error(f"[Chatbot] Erro ao inicializar Gemini: {e}")
 
-    def _get_template_response(self, text: str) -> str:
+    def _get_template_response(self, text: str, user_role: str = None) -> str:
         """Busca a melhor resposta em template JSON por correspondência de palavras-chave."""
         clean_text = text.lower().strip()
         for t in self.templates_data.get("templates", []):
             for kw in t.get("keywords", []):
                 if kw in clean_text:
                     return t.get("response")
+                    
+        if user_role == "ADMIN":
+            return "Olá, Gestor! Para ver o painel, digite RELATORIO. Para gerenciar despesas use APROVAR ou REJEITAR."
         return self.templates_data.get("default_fallback", "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo.")
 
-    async def generate_response(self, text: str) -> str:
+    async def generate_response(self, text: str, user_role: str = None) -> str:
         if not self.client_ready:
-            return self._get_template_response(text)
+            return self._get_template_response(text, user_role)
 
         # Modelos para tentar caso ocorra 429 Rate/Quota Limit
         models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-lite']
         
+        # Ajusta a instrução baseada na role do usuário
+        role_instruction = ""
+        if user_role == "ADMIN":
+            role_instruction = "O usuário é um GESTOR/ADMIN. Não peça para ele enviar fotos de recibos (embora ele possa). Diga que ele pode gerenciar aprovações e ver relatórios. (Use DASHBOARD, RELATORIO, APROVAR)."
+        else:
+            role_instruction = "O usuário é um FUNCIONÁRIO. Diga que para solicitar reembolso, basta enviar a FOTO do cupom fiscal ou recibo."
+
+        dynamic_instruction = self.system_instruction + "\n" + role_instruction
+        
         config = types.GenerateContentConfig(
-            system_instruction=self.system_instruction,
+            system_instruction=dynamic_instruction,
             temperature=0.2,
             max_output_tokens=150
         )
@@ -89,6 +101,6 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
 
         # Se todos os modelos de IA falharem (ex: cota esgotada), usa o Template JSON
         logger.info("[Chatbot] Utilizando resposta via Template JSON após esgotamento de cota da IA.")
-        return self._get_template_response(text)
+        return self._get_template_response(text, user_role)
 
 chatbot_service = ChatbotService()
