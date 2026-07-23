@@ -129,8 +129,13 @@ class CommandHandler:
             return await self.handle_ranking(phone, company, db)
 
         # 2. Tenta extração NLU se houver texto livre além da palavra "RELATORIO"
-        from app.services.nlu_service import nlu_service
-        nlu = await nlu_service.parse_expense_query(clean_text)
+        import re
+        is_simple_command = bool(re.fullmatch(r'^(relat[oó]rio|\d+)(?:\s+\d+)?$', raw_lower))
+        
+        nlu = {}
+        if not is_simple_command:
+            from app.services.nlu_service import nlu_service
+            nlu = await nlu_service.parse_expense_query(clean_text)
 
         # Se for ação de Ranking via NLU
         if nlu.get("action") == "RANKING":
