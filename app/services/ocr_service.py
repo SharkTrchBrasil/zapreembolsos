@@ -1,5 +1,6 @@
 import json
 import base64
+import asyncio
 from datetime import date
 from google import genai
 from google.genai import types
@@ -21,16 +22,39 @@ class OCRService:
             keys = [k.strip() for k in settings.GEMINI_FALLBACK_KEYS.split(",") if k.strip()]
             for k in keys:
                 self.clients.append(genai.Client(api_key=k))
-                
-        # Aviso: Não é seguro hardcodar chaves de API no código.
-        # Por favor, use a variável GEMINI_FALLBACK_KEYS no arquivo .env
-        pass
+        
+        logger.info(f"[OCR] {len(self.clients)} chave(s) de API Gemini configurada(s).")
+
+    async def _try_all_clients(self, image_bytes: bytes, prompt: str) -> str | None:
+        """Tenta todos os clientes e modelos. Retorna o conteúdo ou None."""
+        models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+        last_error = None
+
+        for i, current_client in enumerate(self.clients, 1):
+            for model_name in models_to_try:
+                try:
+                    logger.info(f"[OCR] Chave {i}/{len(self.clients)} | Modelo: {model_name}")
+                    response = await current_client.aio.models.generate_content(
+                        model=model_name,
+                        contents=[
+                            prompt,
+                            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
+                        ]
+                    )
+                    content = response.text
+                    if content:
+                        logger.info(f"[OCR] ✅ Sucesso! Chave {i}/{len(self.clients)} | Modelo: {model_name}")
+                        return content
+                except Exception as e:
+                    logger.warning(f"[OCR] ❌ Chave {i}/{len(self.clients)} | Modelo: {model_name} | Erro: {e}")
+                    last_error = e
+
+        return None
 
     async def extract_receipt_from_image_base64(self, image_base64: str) -> dict:
-        """Usa Gemini 2.5 Flash Vision para ler cupons fiscais, recibos e notas fiscais."""
+        """Usa Gemini Vision para ler cupons fiscais, recibos e notas fiscais."""
         if not self.clients:
-            # Fallback para testes se GEMINI_API_KEY não estiver preenchida
-            logger.warning("Nenhuma chave de API configurada. Usando fallback.")
+            logger.warning("Nenhuma chave de API configurada. Usando fallback de teste.")
             return {
                 "merchant_name": "Posto Shell Marginal (Teste)",
                 "merchant_cnpj": "12.345.678/0001-90",
@@ -53,39 +77,19 @@ class OCRService:
         """
 
         image_bytes = base64.b64decode(image_base64)
-        # Modelos atualizados: 2.5 foi descontinuado pelo Google e 1.5 não é compatível com o novo SDK.
-        models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
-        
-        content = None
-        last_error = None
 
-        for current_client in self.clients:
-            for model_name in models_to_try:
-                try:
-                    logger.info(f"Tentando extração com modelo {model_name}...")
-                    response = await current_client.aio.models.generate_content(
-                        model=model_name,
-                        contents=[
-                            prompt,
-                            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg')
-                        ]
-                    )
-                    content = response.text
-                    if content:
-                        logger.info(f"Sucesso com o modelo {model_name}!")
-                        break
-                except Exception as e:
-                    logger.warning(f"Falha no modelo {model_name} com cliente atual: {e}")
-                    last_error = e
-            
-            if content:
-                break
+        # Primeira tentativa com todos os clientes
+        content = await self._try_all_clients(image_bytes, prompt)
+
+        # Se todas falharam com rate limit, espera e tenta mais uma vez
+        if not content:
+            logger.warning("[OCR] ⏳ Todas as chaves falharam. Aguardando 35s para retry...")
+            await asyncio.sleep(35)
+            logger.info("[OCR] 🔄 Retentando após aguardar cooldown...")
+            content = await self._try_all_clients(image_bytes, prompt)
 
         if not content:
-            raise ValueError(f"Não foi possível processar a imagem com IA: {last_error}")
-
-        if not content:
-            raise ValueError("Resposta vazia da IA.")
+            raise ValueError("Não foi possível processar a imagem com IA: todas as chaves esgotaram a cota.")
             
         content = content.strip()
         if content.startswith("```json"):
@@ -100,3 +104,4 @@ class OCRService:
             raise ValueError("Não foi possível extrair os dados da imagem (JSON inválido).")
 
 ocr_service = OCRService()
+
