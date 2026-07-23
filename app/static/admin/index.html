@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZapReembolso - Gestor</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;700&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/admin/static/styles.css">
+</head>
+<body>
+    
+    <!-- LOGIN VIEW -->
+    <div id="login-view" class="view active">
+        <div class="login-container glass">
+            <div class="brand">
+                <span class="icon">⚡</span>
+                <h1>ZapReembolso</h1>
+            </div>
+            
+            <div id="step-1">
+                <h2>Acesso do Gestor</h2>
+                <p>Insira seu número de WhatsApp para receber o código de acesso (OTP).</p>
+                
+                <div class="input-group">
+                    <label>Seu WhatsApp</label>
+                    <input type="tel" id="phone-input" placeholder="Ex: 5511999999999" autocomplete="off">
+                </div>
+                
+                <button id="btn-request-code" class="btn-primary">Enviar Código</button>
+            </div>
+
+            <div id="step-2" class="hidden">
+                <h2>Verificação</h2>
+                <p>Enviamos um código de 6 dígitos no seu WhatsApp.</p>
+                
+                <div class="input-group">
+                    <label>Código de Acesso</label>
+                    <input type="text" id="code-input" placeholder="000000" maxlength="6" autocomplete="off" style="text-align: center; letter-spacing: 5px; font-weight: bold; font-size: 1.2rem;">
+                </div>
+                
+                <button id="btn-verify-code" class="btn-primary">Acessar Dashboard</button>
+                <button id="btn-back" class="btn-text">Voltar</button>
+            </div>
+            
+            <div id="auth-error" class="error-msg"></div>
+        </div>
+        
+        <!-- Background shapes for premium look -->
+        <div class="bg-shape shape-1"></div>
+        <div class="bg-shape shape-2"></div>
+    </div>
+
+    <!-- DASHBOARD VIEW -->
+    <div id="dashboard-view" class="view hidden">
+        <aside class="sidebar glass">
+            <div class="brand">
+                <span class="icon">⚡</span>
+                <h2>ZapReembolso</h2>
+            </div>
+            <nav class="menu">
+                <a href="#" class="active"><span class="icon">📊</span> Visão Geral</a>
+                <a href="#"><span class="icon">💸</span> Despesas</a>
+                <a href="#"><span class="icon">👥</span> Equipe</a>
+                <a href="#"><span class="icon">⚙️</span> Configurações</a>
+            </nav>
+            
+            <div class="user-profile">
+                <div class="avatar" id="user-avatar">G</div>
+                <div class="info">
+                    <p id="user-name">Gestor</p>
+                    <span>Admin</span>
+                </div>
+                <button id="btn-logout" title="Sair">🚪</button>
+            </div>
+        </aside>
+
+        <main class="content">
+            <header class="topbar">
+                <div class="greeting">
+                    <h1 id="greeting-text">Olá, Gestor</h1>
+                    <p>Aqui está o resumo financeiro de hoje.</p>
+                </div>
+                <div class="actions">
+                    <button class="btn-icon" id="theme-toggle" title="Alternar Tema">☀️</button>
+                    <button class="btn-secondary" onclick="window.location.reload()"><span class="icon">🔄</span> Atualizar Dados</button>
+                </div>
+            </header>
+
+            <div class="kpi-grid">
+                <div class="kpi-card glass">
+                    <div class="kpi-header">
+                        <h3>Gasto Total (Mês)</h3>
+                        <span class="icon-circle bg-purple">💰</span>
+                    </div>
+                    <div class="kpi-value" id="kpi-total">R$ 0,00</div>
+                </div>
+                
+                <div class="kpi-card glass">
+                    <div class="kpi-header">
+                        <h3>Aguardando Aprovação</h3>
+                        <span class="icon-circle bg-orange">⏳</span>
+                    </div>
+                    <div class="kpi-value" id="kpi-pending-amt">R$ 0,00</div>
+                    <div class="kpi-subtitle"><span id="kpi-pending-cnt">0</span> solicitações</div>
+                </div>
+                
+                <div class="kpi-card glass">
+                    <div class="kpi-header">
+                        <h3>Equipe Ativa</h3>
+                        <span class="icon-circle bg-blue">👥</span>
+                    </div>
+                    <div class="kpi-value" id="kpi-employees">0</div>
+                    <div class="kpi-subtitle">funcionários vinculados</div>
+                </div>
+            </div>
+
+            <div class="main-grid">
+                <div class="chart-section glass">
+                    <h3>Despesas por Categoria</h3>
+                    <div class="chart-container">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="table-section glass">
+                    <div class="table-header">
+                        <h3>Últimas Despesas</h3>
+                        <div class="filters">
+                            <select id="status-filter">
+                                <option value="">Todos</option>
+                                <option value="PENDING">Pendentes</option>
+                                <option value="APPROVED">Aprovadas</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="table-container">
+                        <table id="expenses-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Data</th>
+                                    <th>Funcionário</th>
+                                    <th>Categoria</th>
+                                    <th>Estabelecimento</th>
+                                    <th>Valor</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- JS Injected -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/admin/static/app.js"></script>
+</body>
+</html>

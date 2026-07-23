@@ -80,6 +80,7 @@ class ExpenseService:
             expense_id = str(uuid.uuid4())
             file_name = f"{user.company_id}/{expense_id}.jpg"
             s3_key = storage_service.upload_image(image_bytes, file_name)
+            presigned_url = storage_service.generate_presigned_url(s3_key)
 
             new_expense = Expense(
                 id=expense_id,
@@ -93,6 +94,7 @@ class ExpenseService:
                 status=ExpenseStatus.PENDING if is_valid else ExpenseStatus.REJECTED,
                 rejection_reason=policy_reason if not is_valid else None,
                 image_s3_key=s3_key,
+                receipt_url=presigned_url,
                 ocr_confidence=parsed.get("confidence_score", 0.9), # Fake score if not returned
                 ocr_raw_data=json.dumps(parsed),
                 nfce_access_key=access_key,

@@ -19,10 +19,16 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     AWS_S3_BUCKET: str = "zap-reembolsos"
 
-    EFI_CLIENT_ID: str = ""
-    EFI_CLIENT_SECRET: str = ""
-    EFI_CERTIFICATE_PATH: str = ""
+    EFI_CLIENT_ID: str = "Client_Id_Example"
+    EFI_CLIENT_SECRET: str = "Client_Secret_Example"
+    EFI_CERTIFICATE_PATH: str = "cert.pem"
+    
+    JWT_SECRET: str = "your_super_secret_jwt_key_here"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     EFI_PIX_KEY: str = "comercial@zapreembolso.com.br"
+    
+    REDIS_URL: str = ""
 
     class Config:
         env_file = ".env"

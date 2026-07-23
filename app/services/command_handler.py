@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -57,6 +57,31 @@ class CommandHandler:
         await wuzapi_client.send_text_message(phone, welcome_admin)
         return {"status": "ok"}
 
+    async def handle_ajuda(self, phone: str, user: User) -> dict:
+        if user.role == UserRole.ADMIN:
+            msg = (
+                "💡 *Menu de Ajuda (Gestor)*\n\n"
+                "Aqui estão os comandos que você pode usar a qualquer momento:\n"
+                "• *RELATORIO* - Mostra as despesas agrupadas do mês atual.\n"
+                "• *EXPORTAR* - Envia um arquivo CSV com todas as despesas aprovadas.\n"
+                "• *APROVAR [ID]* - Aprova uma despesa e avisa o funcionário.\n"
+                "• *REJEITAR [ID] [MOTIVO]* - Rejeita a despesa.\n"
+                "• *ACEITAR [Telefone]* - Aprova um funcionário novo.\n"
+                "• *CANCELAR* - Cancela qualquer ação pendente e volta ao início."
+            )
+        else:
+            msg = (
+                "💡 *Menu de Ajuda (Funcionário)*\n\n"
+                "Aqui estão os comandos que você pode usar a qualquer momento:\n"
+                "• *(Envie uma Imagem)* - Basta mandar a foto de um cupom ou recibo para pedir reembolso.\n"
+                "• *DESPESA [Valor] [Motivo]* - Lança uma despesa manual (se não tiver foto).\n"
+                "• *KM [Distância]* - Solicita reembolso por quilometragem rodada.\n"
+                "• *CANCELAR* - Cancela qualquer ação pendente e volta ao início."
+            )
+        
+        await wuzapi_client.send_text_message(phone, msg)
+        return {"status": "ok"}
+
     async def handle_vincular(self, clean_text: str, phone: str, user: User, db: AsyncSession) -> dict:
         raw_code = clean_text.replace("#", "").replace("ENTRAR", "").strip().upper()
         comp_query = select(Company).where(Company.code == raw_code)
@@ -66,13 +91,27 @@ class CommandHandler:
         if target_company:
             user.company_id = target_company.id
             user.role = UserRole.EMPLOYEE
+            user.is_approved = False
             await db.commit()
 
             link_msg = (
-                f"✅ *Conta Vinculada à empresa {target_company.name}!*\n\n"
-                f"A partir de agora, qualquer foto de *cupom fiscal ou recibo* que você enviar aqui será registrada automaticamente para o reembolso do seu gestor."
+                f"⏳ *Solicitação enviada com sucesso!*\n\n"
+                f"Sua solicitação para a empresa *{target_company.name}* foi enviada ao gestor.\n"
+                f"Assim que ele aprovar seu cadastro, você receberá uma notificação aqui e poderá enviar seus comprovantes!"
             )
             await wuzapi_client.send_text_message(phone, link_msg)
+
+            admin_alert = (
+                f"👤 *Solicitação de Cadastro - ZapReembolso*\n"
+                f"Um novo funcionário solicitou vínculo à sua empresa via código:\n\n"
+                f"👤 *Nome:* {user.name or 'Não informado'}\n"
+                f"📱 *WhatsApp:* {user.phone}\n\n"
+                f"----------------------------------\n"
+                f"Responda este chat para autorizar:\n"
+                f"1 - ✅ *ACEITAR*\n"
+                f"2 - ❌ *RECUSAR*"
+            )
+            await wuzapi_client.send_text_message(target_company.admin_phone, admin_alert)
         else:
             await wuzapi_client.send_text_message(phone, f"❌ Código `#{raw_code}` não encontrado. Verifique com seu gestor o código correto da empresa.")
         return {"status": "ok"}
@@ -172,9 +211,27 @@ class CommandHandler:
         )
         
         if pending_expenses and user.role == UserRole.ADMIN:
-            report_msg += "\n📋 *Despesas Pendentes de Aprovação:*\n"
-            for p in pending_expenses[:5]:
+            import re
+            page_match = re.search(r'\b(pag|page|pagina|página|p)\s*(\d+)\b|\b(\d+)\b', clean_text.lower())
+            page = 1
+            if page_match:
+                page_str = page_match.group(2) or page_match.group(3)
+                if page_str:
+                    page = max(1, int(page_str))
+            
+            per_page = 5
+            total_pages = (len(pending_expenses) + per_page - 1) // per_page
+            page = min(page, total_pages)
+            
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            
+            report_msg += f"\n📋 *Despesas Pendentes de Aprovação (Pág {page}/{total_pages}):*\n"
+            for p in pending_expenses[start_idx:end_idx]:
                 report_msg += f"• [{p.id[:4]}] {p.merchant_name} (R$ {p.amount:.2f})\n"
+                
+            if total_pages > page:
+                report_msg += f"\n💡 *Para ver mais pendentes, envie:* RELATORIO {page+1}"
             report_msg += "\n💡 *Para aprovar:* responda *1* ou *APROVAR [ID]*."
 
         await wuzapi_client.send_text_message(phone, report_msg)
@@ -271,7 +328,7 @@ class CommandHandler:
         )
         return {"status": "ok"}
 
-    async def handle_aprovar_rejeitar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+    async def handle_aprovar_rejeitar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession, bypass_confirm: bool = False) -> dict:
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aprovar ou rejeitar despesas.")
             return {"status": "ok"}
@@ -330,6 +387,18 @@ class CommandHandler:
         if not exp:
             await wuzapi_client.send_text_message(phone, f"❌ Despesa '{short_id}' não encontrada ou já processada.")
             return {"status": "ok"}
+            
+        if not bypass_confirm:
+            user.onboarding_step = f"CONFIRM_{action}_{exp.id}"
+            await db.commit()
+            
+            action_pt = "aprovar" if action == "APROVAR" else "rejeitar"
+            await wuzapi_client.send_text_message(
+                phone,
+                f"⚠️ *Tem certeza* que deseja {action_pt} a despesa de R$ {exp.amount:.2f} do estabelecimento {exp.merchant_name}?\n\n"
+                f"Responda *SIM* para confirmar, ou *CANCELAR* para abortar."
+            )
+            return {"status": "ok"}
 
         exp.status = new_status
         exp.approved_by = phone
@@ -356,7 +425,7 @@ class CommandHandler:
         )
         return {"status": "ok"}
 
-    async def handle_aceitar_recusar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+    async def handle_aceitar_recusar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession, bypass_confirm: bool = False) -> dict:
         """Permite que o gestor aceite ou recuse a solicitação de um funcionário."""
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aceitar ou recusar funcionários.")
@@ -407,6 +476,18 @@ class CommandHandler:
 
         if not target_user:
             await wuzapi_client.send_text_message(phone, f"❌ Funcionário com telefone `{target_phone}` não foi encontrado nas solicitações pendentes.")
+            return {"status": "ok"}
+            
+        if not bypass_confirm:
+            user.onboarding_step = f"CONFIRM_{action}_{target_user.phone}"
+            await db.commit()
+            
+            action_pt = "aceitar" if action == "ACEITAR" else "recusar"
+            await wuzapi_client.send_text_message(
+                phone,
+                f"⚠️ *Tem certeza* que deseja {action_pt} o funcionário *{target_user.name}* ({target_user.phone})?\n\n"
+                f"Responda *SIM* para confirmar, ou *CANCELAR* para abortar."
+            )
             return {"status": "ok"}
 
         if action == "ACEITAR":
@@ -488,62 +569,6 @@ class CommandHandler:
         await wuzapi_client.send_text_message(phone, f"✅ **Política Atualizada!**\nO limite para `{category_enum.value}` agora é **R$ {max_amount:.2f}**.")
         return {"status": "ok"}
 
-    async def handle_exportar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
-        if user.role != UserRole.ADMIN:
-            await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem exportar relatórios.")
-            return {"status": "ok"}
-
-        today = date.today()
-        exp_query = select(Expense).where(
-            Expense.company_id == company.id,
-            Expense.expense_date >= today.replace(day=1),
-            Expense.status == ExpenseStatus.APPROVED
-        )
-        exp_res = await db.execute(exp_query)
-        expenses = exp_res.scalars().all()
-
-        if not expenses:
-            await wuzapi_client.send_text_message(phone, "❌ Nenhuma despesa aprovada no mês atual para exportar.")
-            return {"status": "ok"}
-
-        import io
-        import csv
-        
-        output = io.StringIO()
-        writer = csv.writer(output, delimiter=';')
-        writer.writerow(["ID", "Data", "Funcionario_Phone", "Categoria", "Estabelecimento", "CNPJ", "Valor", "Tem_Recibo"])
-        
-        total = 0
-        for e in expenses:
-            writer.writerow([
-                e.id[:8],
-                e.expense_date.strftime("%d/%m/%Y"),
-                e.user_phone,
-                e.category.value,
-                e.merchant_name,
-                e.merchant_cnpj or "-",
-                f"{e.amount:.2f}".replace(".", ","),
-                "SIM" if e.has_receipt else "NAO"
-            ])
-            total += float(e.amount)
-            
-        writer.writerow([])
-        writer.writerow(["TOTAL", "", "", "", "", "", f"{total:.2f}".replace(".", ",")])
-
-        csv_content = output.getvalue()
-        file_bytes = csv_content.encode('utf-8')
-        
-        # Em produção mandaríamos por document no WuzAPI, ou enviamos um link temporário, ou o texto cru formatado.
-        # WuzAPI tem endpoint sendDocument? Como fallback vamos mandar um preview.
-        preview = "📊 **Resumo CSV Exportado (copie e cole no Excel)**\n\n"
-        preview += "ID;Data;Telefone;Categoria;Local;CNPJ;Valor;Recibo\n"
-        for row in csv_content.split("\n")[1:10]: # Manda até 10 linhas como preview
-            if row.strip():
-                preview += row + "\n"
-        preview += f"\n*... e mais {len(expenses)} despesas.*\nTotal Aprovado: R$ {total:.2f}"
-        
-        await wuzapi_client.send_text_message(phone, preview)
-        return {"status": "ok"}
 
     async def handle_despesa(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
         """Comando: DESPESA 50.00 Almoço com cliente"""

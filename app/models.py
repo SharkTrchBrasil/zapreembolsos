@@ -64,6 +64,7 @@ class User(Base):
     company_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("companies.id"), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     company: Mapped["Company | None"] = relationship(back_populates="users")
     expenses: Mapped[list["Expense"]] = relationship("Expense", foreign_keys="[Expense.user_phone]", back_populates="user", cascade="all, delete-orphan")
@@ -93,6 +94,7 @@ class Expense(Base):
     approved_by: Mapped[str | None] = mapped_column(String(30), ForeignKey("users.phone"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     has_receipt: Mapped[bool] = mapped_column(Boolean, default=True)
+    receipt_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # URL pública do comprovante (S3 presigned)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

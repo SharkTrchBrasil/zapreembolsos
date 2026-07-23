@@ -1,6 +1,9 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
+import logging
+
+logger = logging.getLogger("database")
 
 # Normaliza a URL do banco para suporte assíncrono (asyncpg) vindo do Coolify / Heroku / Supabase
 db_url = settings.DATABASE_URL
@@ -52,16 +55,20 @@ async def init_db():
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS rejection_reason TEXT;",
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_by VARCHAR(30);",
             "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP WITH TIME ZONE;",
-            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN DEFAULT TRUE;"
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN DEFAULT TRUE;",
+
+            # Novas colunas adicionadas nas Fases 1-3
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();",
+            "ALTER TABLE expenses ADD COLUMN IF NOT EXISTS receipt_url TEXT;",
         ]
 
-        print("🔄 Executando verificação de colunas e migrações do banco de dados...")
+        logger.info("🔄 Executando verificação de colunas e migrações do banco de dados...")
         for sql in migration_sqls:
             try:
                 await conn.execute(text(sql))
             except Exception as e:
-                print(f"⚠️ Aviso na migração: {e}")
-        print("✅ Banco de dados e schemas verificados com sucesso!")
+                logger.warning(f"⚠️ Aviso na migração: {e}")
+        logger.info("✅ Banco de dados e schemas verificados com sucesso!")
 
 async def get_db():
     async with AsyncSessionLocal() as session:

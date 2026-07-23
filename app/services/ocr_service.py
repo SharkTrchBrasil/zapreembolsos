@@ -4,6 +4,9 @@ from datetime import date
 from google import genai
 from google.genai import types
 from app.config import settings
+import logging
+
+logger = logging.getLogger("ocr_service")
 
 class OCRService:
     def __init__(self):
@@ -13,7 +16,7 @@ class OCRService:
         """Usa Gemini 2.5 Flash Vision para ler cupons fiscais, recibos e notas fiscais."""
         if not self.client:
             # Fallback para testes se GEMINI_API_KEY não estiver preenchida
-            print("[OCR] GEMINI_API_KEY não configurada. Usando fallback.")
+            logger.warning("GEMINI_API_KEY não configurada. Usando fallback.")
             return {
                 "merchant_name": "Posto Shell Marginal (Teste)",
                 "merchant_cnpj": "12.345.678/0001-90",
@@ -36,13 +39,13 @@ class OCRService:
         """
 
         image_bytes = base64.b64decode(image_base64)
-        models_to_try = ["gemini-2.0-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+        models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         content = None
         last_error = None
 
         for model_name in models_to_try:
             try:
-                print(f"[OCR] Tentando extração com modelo {model_name}...")
+                logger.info(f"Tentando extração com modelo {model_name}...")
                 response = await self.client.aio.models.generate_content(
                     model=model_name,
                     contents=[
@@ -52,10 +55,10 @@ class OCRService:
                 )
                 content = response.text
                 if content:
-                    print(f"[OCR] Sucesso com o modelo {model_name}!")
+                    logger.info(f"Sucesso com o modelo {model_name}!")
                     break
             except Exception as e:
-                print(f"[OCR Warning] Falha no modelo {model_name}: {e}")
+                logger.warning(f"Falha no modelo {model_name}: {e}")
                 last_error = e
 
         if not content:
@@ -73,7 +76,7 @@ class OCRService:
         try:
             return json.loads(content)
         except json.JSONDecodeError as e:
-            print(f"[OCR Error] JSON inválido retornado pela IA: {e}")
+            logger.error(f"JSON inválido retornado pela IA: {e}")
             raise ValueError("Não foi possível extrair os dados da imagem (JSON inválido).")
 
 ocr_service = OCRService()
