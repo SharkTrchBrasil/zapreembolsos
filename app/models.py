@@ -38,7 +38,7 @@ class Company(Base):
     cnpj: Mapped[str | None] = mapped_column(String(20), nullable=True) # CNPJ para faturamento/segurança
     estimated_employees: Mapped[str | None] = mapped_column(String(50), nullable=True) # Porte (ex: 1-10, 10-50, 50-500)
     billing_email: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    onboarding_step: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    onboarding_step: Mapped[str | None] = mapped_column(String(255), nullable=True)
     plan: Mapped[PlanType] = mapped_column(Enum(PlanType), default=PlanType.FREE_TRIAL)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     subscription_status: Mapped[str | None] = mapped_column(String(30), default="TRIAL") # TRIAL, ACTIVE, EXPIRED
@@ -60,7 +60,7 @@ class User(Base):
     department: Mapped[str | None] = mapped_column(String(100), nullable=True) # Setor / Secretaria
     job_title: Mapped[str | None] = mapped_column(String(100), nullable=True) # Cargo / Profissão
     is_approved: Mapped[bool] = mapped_column(Boolean, default=True) # Se já foi aprovado pelo gestor
-    onboarding_step: Mapped[str | None] = mapped_column(String(50), nullable=True) # Passo da máquina de estados
+    onboarding_step: Mapped[str | None] = mapped_column(String(255), nullable=True) # Passo da máquina de estados
     company_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("companies.id"), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.EMPLOYEE)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

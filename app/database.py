@@ -32,14 +32,16 @@ async def init_db():
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(100);",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(100);",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_approved BOOLEAN DEFAULT TRUE;",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(50);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(255);",
+            "ALTER TABLE users ALTER COLUMN onboarding_step TYPE VARCHAR(255);",
 
             # Tabela companies
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS admin_name VARCHAR(100);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS cnpj VARCHAR(20);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS estimated_employees VARCHAR(50);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(100);",
-            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(50);",
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS onboarding_step VARCHAR(255);",
+            "ALTER TABLE companies ALTER COLUMN onboarding_step TYPE VARCHAR(255);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS km_rate NUMERIC(10, 2);",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(30) DEFAULT 'TRIAL';",
