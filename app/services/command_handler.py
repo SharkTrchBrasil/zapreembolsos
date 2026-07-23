@@ -174,19 +174,21 @@ class CommandHandler:
                 period_str = f"{s_date.strftime('%d/%m/%Y')} até {e_date.strftime('%d/%m/%Y')}"
             except Exception:
                 from sqlalchemy import or_
-                month_start = str(today.replace(day=1))
+                month_start_date = today.replace(day=1)
+                month_start_dt = datetime.combine(month_start_date, datetime.min.time(), tzinfo=timezone.utc)
                 exp_query = exp_query.where(or_(
-                    Expense.expense_date >= month_start,
-                    Expense.created_at >= month_start,
+                    Expense.expense_date >= month_start_date,
+                    Expense.created_at >= month_start_dt,
                     Expense.status == ExpenseStatus.PENDING
                 ))
                 period_str = f"Mês Atual ({today.strftime('%m/%Y')}) + Pendentes"
         else:
             from sqlalchemy import or_
-            month_start = str(today.replace(day=1))
+            month_start_date = today.replace(day=1)
+            month_start_dt = datetime.combine(month_start_date, datetime.min.time(), tzinfo=timezone.utc)
             exp_query = exp_query.where(or_(
-                Expense.expense_date >= month_start,
-                Expense.created_at >= month_start,
+                Expense.expense_date >= month_start_date,
+                Expense.created_at >= month_start_dt,
                 Expense.status == ExpenseStatus.PENDING
             ))
             period_str = f"Mês Atual ({today.strftime('%m/%Y')}) + Pendentes"
