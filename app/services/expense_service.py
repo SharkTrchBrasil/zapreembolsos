@@ -125,8 +125,7 @@ class ExpenseService:
                     user_desc += f" ({user.job_title or 'Funcionário'} - {user.department or 'Geral'})"
 
                 caption = (
-                    f"📥 *[Aviso Gestor ZapReembolso - {company.name}]*\n"
-                    f"Nova despesa enviada por *{user_desc}*:\n\n"
+                    f"📥 Nova despesa enviada por *{user_desc}*:\n\n"
                     f"🏢 *Local:* {new_expense.merchant_name}\n"
                     f"💰 *Valor:* R$ {new_expense.amount:.2f} ({category_enum.value})\n"
                     f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"

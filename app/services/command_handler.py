@@ -627,7 +627,7 @@ class CommandHandler:
 
             if company and company.admin_phone and company.admin_phone != phone:
                 admin_alert = (
-                    f"📥 **[Aviso Gestor]** Nova despesa SEM COMPROVANTE de **{user.name or phone}**:\n"
+                    f"📥 Nova despesa **SEM COMPROVANTE** de **{user.name or phone}**:\n"
                     f"💰 R$ {amount:.2f}\n"
                     f"📝 Motivo: {justification}\n\n"
                     f"Responda *APROVAR {expense_id[:4]}* ou *REJEITAR {expense_id[:4]}*"
@@ -691,7 +691,7 @@ class CommandHandler:
 
         if company and company.admin_phone and company.admin_phone != phone:
             admin_alert = (
-                f"🚗 **[Aviso Gestor]** Reembolso de KM de **{user.name or phone}**:\n"
+                f"🚗 Reembolso de KM de **{user.name or phone}**:\n"
                 f"Distância: {distance} km\n"
                 f"Valor: R$ {amount:.2f}\n\n"
                 f"Responda *APROVAR {expense_id[:4]}* ou *REJEITAR {expense_id[:4]}*"
