@@ -251,6 +251,26 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             await wuzapi_client.send_text_message(phone, "⚠️ Por favor, responda *SIM* para confirmar ou *CANCELAR* para abortar.")
             return {"status": "ok"}
 
+    # 6.6 MENU DE RELATÓRIOS (REPORT_MENU)
+    if user.onboarding_step == "REPORT_MENU":
+        if clean_text == "1":
+            user.onboarding_step = None
+            await db.commit()
+            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
+        elif clean_text == "2":
+            user.onboarding_step = None
+            await db.commit()
+            return await command_handler.handle_ranking(phone, company, db)
+        elif clean_text == "3":
+            user.onboarding_step = None
+            await db.commit()
+            return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
+        else:
+            user.onboarding_step = None
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🚫 Operação cancelada. Voltando ao início.")
+            return {"status": "ok"}
+
     # 7. Inicialização do Comando CRIAR Empresa (Atalho direto)
     if clean_text.upper().startswith("CRIAR"):
         return await command_handler.handle_criar(clean_text, phone, user, db)
@@ -364,7 +384,20 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         return await command_handler.handle_exportar(clean_text, phone, user, company, db)
 
     # 5. Comando "RELATORIO" (suporta paginação: RELATORIO 2)
-    if clean_text.upper().startswith("RELATORIO"):
+    if clean_text.upper() == "RELATORIO" or (user.role == UserRole.ADMIN and clean_text == "4"):
+        user.onboarding_step = "REPORT_MENU"
+        await db.commit()
+        report_menu = (
+            "📊 *Menu de Relatórios*\n"
+            "Responda com o número do relatório desejado:\n\n"
+            "1️⃣ - Resumo do Mês (Categorias e Funcionários)\n"
+            "2️⃣ - Ranking de Gastos\n"
+            "3️⃣ - Exportar para Excel (CSV)\n"
+            "4️⃣ - Voltar/Cancelar"
+        )
+        await wuzapi_client.send_text_message(phone, report_menu)
+        return {"status": "ok"}
+    elif clean_text.upper().startswith("RELATORIO"):
         return await command_handler.handle_relatorio(clean_text, phone, user, company, db)
 
     # 6. Comando "APROVAR" e "REJEITAR"
@@ -414,7 +447,7 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             await wuzapi_client.send_text_message(phone, f"🌐 *Acesse o Painel Web:* {painel_url}")
             return {"status": "ok"}
         elif clean_text == "4":
-            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
+            pass # Tratado acima (abre o REPORT_MENU)
         elif clean_text == "5":
             return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
         elif clean_text == "6":
