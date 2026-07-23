@@ -410,8 +410,11 @@ class CommandHandler:
 
         await db.commit()
         
+        # Converte o status para português
+        status_pt = "APROVADA" if new_status == ExpenseStatus.APPROVED else "REJEITADA"
+        
         # Notifica o funcionário
-        employee_msg = f"🔔 **Sua despesa foi {new_status.value}!**\n📍 {exp.merchant_name} (R$ {exp.amount:.2f})\n"
+        employee_msg = f"🔔 **Sua despesa foi {status_pt}!**\n📍 {exp.merchant_name} (R$ {exp.amount:.2f})\n"
         if action == "REJEITAR":
             employee_msg += f"❌ **Motivo:** {exp.rejection_reason}"
         else:
@@ -421,7 +424,7 @@ class CommandHandler:
 
         await wuzapi_client.send_text_message(
             phone,
-            f"✅ **Despesa de {exp.merchant_name} (R$ {exp.amount:.2f}) {new_status.value}!** O funcionário foi notificado."
+            f"✅ **Despesa de {exp.merchant_name} (R$ {exp.amount:.2f}) {status_pt}!** O funcionário foi notificado."
         )
         return {"status": "ok"}
 
