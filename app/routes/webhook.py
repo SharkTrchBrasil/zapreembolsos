@@ -426,14 +426,13 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         
         if user and user.role == UserRole.ADMIN:
             admin_tips = (
-                "\n\n🤖 *Menu Rápido Gestor:*\n"
+                "\n\n🤖 *Menu Principal (Gestor)*\n"
                 "Responda com o número desejado:\n"
-                "1️⃣ - Aprovar Pendência\n"
-                "2️⃣ - Rejeitar Pendência\n"
+                "1️⃣ - Aprovar Pendência (se houver)\n"
+                "2️⃣ - Rejeitar Pendência (se houver)\n"
                 "3️⃣ - Acessar Painel Web\n"
                 "4️⃣ - Ver Relatório do Mês\n"
                 "5️⃣ - Exportar Despesas (CSV)\n"
-                "6️⃣ - Ajuda / Comandos Completos\n"
             )
             ai_response += admin_tips
             

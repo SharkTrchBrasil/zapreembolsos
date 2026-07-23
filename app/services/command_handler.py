@@ -60,14 +60,14 @@ class CommandHandler:
     async def handle_ajuda(self, phone: str, user: User) -> dict:
         if user.role == UserRole.ADMIN:
             msg = (
-                "💡 *Menu de Ajuda (Gestor)*\n\n"
-                "Aqui estão os comandos que você pode usar a qualquer momento:\n"
-                "• *RELATORIO* - Mostra as despesas agrupadas do mês atual.\n"
-                "• *EXPORTAR* - Envia um arquivo CSV com todas as despesas aprovadas.\n"
-                "• *APROVAR [ID]* - Aprova uma despesa e avisa o funcionário.\n"
-                "• *REJEITAR [ID] [MOTIVO]* - Rejeita a despesa.\n"
-                "• *ACEITAR [Telefone]* - Aprova um funcionário novo.\n"
-                "• *CANCELAR* - Cancela qualquer ação pendente e volta ao início."
+                "🤖 *Menu Principal (Gestor)*\n"
+                "Responda com o número desejado:\n\n"
+                "1️⃣ - Aprovar Pendência (se houver)\n"
+                "2️⃣ - Rejeitar Pendência (se houver)\n"
+                "3️⃣ - Acessar Painel Web\n"
+                "4️⃣ - Ver Relatório do Mês\n"
+                "5️⃣ - Exportar Despesas (CSV)\n\n"
+                "💡 _Dica: Você também pode digitar diretamente os comandos completos como APROVAR [ID], REJEITAR [ID] [Motivo], ACEITAR [Telefone] ou CANCELAR._"
             )
         else:
             msg = (
