@@ -385,16 +385,32 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
         )
         return {"status": "ok"}
 
+    # 7.5. Atalhos Numéricos (Menu Rápido)
+    if user and user.role == UserRole.ADMIN:
+        if clean_text == "1":
+            from fastapi import Request
+            painel_url = f"{request.base_url}admin" if request else "/admin"
+            await wuzapi_client.send_text_message(phone, f"🌐 *Acesse o Painel Web:* {painel_url}")
+            return {"status": "ok"}
+        elif clean_text == "2":
+            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
+        elif clean_text == "3":
+            return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
+        elif clean_text == "4":
+            return await command_handler.handle_ajuda(phone, user)
+
     # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
     if clean_text:
         ai_response = await chatbot_service.generate_response(clean_text, user_role=user.role.value if user else None)
         
-        if user.role == UserRole.ADMIN:
+        if user and user.role == UserRole.ADMIN:
             admin_tips = (
-                "\n\n🤖 *Dica de Gestor:*\n"
-                "- `RELATORIO`\n"
-                "- `APROVAR [ID]`\n"
-                "- `REJEITAR [ID]`"
+                "\n\n🤖 *Menu Rápido Gestor:*\n"
+                "Responda com o número desejado:\n"
+                "1️⃣ - Acessar Painel Web\n"
+                "2️⃣ - Ver Relatório do Mês\n"
+                "3️⃣ - Exportar Despesas (CSV)\n"
+                "4️⃣ - Ajuda / Comandos Completos\n"
             )
             ai_response += admin_tips
             
