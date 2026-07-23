@@ -392,16 +392,19 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
 
     # 7.5. Atalhos Numéricos (Menu Rápido)
     if user and user.role == UserRole.ADMIN:
-        if clean_text == "1":
+        if clean_text in ["1", "01", "2", "02"]:
+            await wuzapi_client.send_text_message(phone, "❌ Você não tem despesas ou funcionários aguardando aprovação no momento.")
+            return {"status": "ok"}
+        elif clean_text == "3":
             from fastapi import Request
             painel_url = f"{request.base_url}admin" if request else "/admin"
             await wuzapi_client.send_text_message(phone, f"🌐 *Acesse o Painel Web:* {painel_url}")
             return {"status": "ok"}
-        elif clean_text == "2":
-            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
-        elif clean_text == "3":
-            return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
         elif clean_text == "4":
+            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
+        elif clean_text == "5":
+            return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
+        elif clean_text == "6":
             return await command_handler.handle_ajuda(phone, user)
 
     # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
@@ -412,10 +415,12 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
             admin_tips = (
                 "\n\n🤖 *Menu Rápido Gestor:*\n"
                 "Responda com o número desejado:\n"
-                "1️⃣ - Acessar Painel Web\n"
-                "2️⃣ - Ver Relatório do Mês\n"
-                "3️⃣ - Exportar Despesas (CSV)\n"
-                "4️⃣ - Ajuda / Comandos Completos\n"
+                "1️⃣ - Aprovar Pendência\n"
+                "2️⃣ - Rejeitar Pendência\n"
+                "3️⃣ - Acessar Painel Web\n"
+                "4️⃣ - Ver Relatório do Mês\n"
+                "5️⃣ - Exportar Despesas (CSV)\n"
+                "6️⃣ - Ajuda / Comandos Completos\n"
             )
             ai_response += admin_tips
             
