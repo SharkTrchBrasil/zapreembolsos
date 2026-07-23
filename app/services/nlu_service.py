@@ -5,6 +5,7 @@ from datetime import datetime, date
 from typing import Dict, Any, Optional
 from google import genai
 from google.genai import types
+from openai import AsyncOpenAI
 from app.config import settings
 
 logger = logging.getLogger("nlu_service")
@@ -18,6 +19,20 @@ class NLUService:
                 self.client = genai.Client(api_key=self.api_key)
             except Exception as e:
                 logger.error(f"[NLU] Erro ao conectar Gemini NLU: {e}")
+
+        self.groq_client = None
+        if settings.GROQ_API_KEY:
+            self.groq_client = AsyncOpenAI(
+                api_key=settings.GROQ_API_KEY,
+                base_url="https://api.groq.com/openai/v1"
+            )
+
+        self.mistral_client = None
+        if settings.MISTRAL_API_KEY:
+            self.mistral_client = AsyncOpenAI(
+                api_key=settings.MISTRAL_API_KEY,
+                base_url="https://api.mistral.ai/v1"
+            )
 
     async def parse_expense_query(self, user_text: str) -> Dict[str, Any]:
         """
@@ -63,6 +78,40 @@ Responda APENAS o JSON puro.
                     return json.loads(response.text.strip())
             except Exception as e:
                 logger.warning(f"[NLU] Falha na extração de NLU via Gemini: {e}")
+
+        # Fallback para Groq
+        if self.groq_client:
+            try:
+                logger.info("[NLU] 🟠 Tentando Groq NLU...")
+                response = await self.groq_client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    response_format={"type": "json_object"},
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1
+                )
+                content = response.choices[0].message.content
+                if content:
+                    logger.info("[NLU] ✅ Sucesso Groq NLU!")
+                    return json.loads(content)
+            except Exception as e:
+                logger.warning(f"[NLU] ❌ Falha Groq NLU: {e}")
+
+        # Fallback para Mistral
+        if self.mistral_client:
+            try:
+                logger.info("[NLU] 🟠 Tentando Mistral NLU...")
+                response = await self.mistral_client.chat.completions.create(
+                    model="mistral-small-latest",
+                    response_format={"type": "json_object"},
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1
+                )
+                content = response.choices[0].message.content
+                if content:
+                    logger.info("[NLU] ✅ Sucesso Mistral NLU!")
+                    return json.loads(content)
+            except Exception as e:
+                logger.warning(f"[NLU] ❌ Falha Mistral NLU: {e}")
 
         # Fallback local via RegEx se a IA estiver offline ou sem cota
         return self._local_regex_parse(user_text)
