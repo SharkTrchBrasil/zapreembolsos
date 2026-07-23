@@ -180,25 +180,24 @@ class MenuService:
         await db.commit()
         msg = (
             "👥 *Gestão de Equipe*\n"
-            "Escolha o que deseja fazer:\n\n"
-            "1️⃣ - Aprovar Novo Funcionário\n"
-            "2️⃣ - Rejeitar Novo Funcionário\n"
-            "3️⃣ - Definir Limite de Gastos p/ Funcionário\n"
-            "4️⃣ - Voltar ao Menu Principal"
+            "Escolha a ação desejada:\n\n"
+            "1️⃣ - 📋 Listar Todos os Funcionários\n"
+            "2️⃣ - ✅ Aprovar Novos Cadastros\n"
+            "3️⃣ - 💸 Definir Limite de Gastos\n"
+            "4️⃣ - ✏️ Editar Perfil do Funcionário\n"
+            "5️⃣ - ❌ Excluir / Desativar Funcionário\n"
+            "6️⃣ - 🔙 Voltar ao Menu Principal"
         )
         await wuzapi_client.send_text_message(phone, msg)
         return {"status": "ok"}
 
     async def handle_team_menu(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
         if text == "1":
+            return await self.handle_team_list(phone, user, company, db)
+        elif text == "2":
             user.onboarding_step = "MENU_TEAM_ACCEPT"
             await db.commit()
             await wuzapi_client.send_text_message(phone, "👥 Digite o *telefone* do funcionário que deseja aprovar (Ex: 5511999999999).")
-            return {"status": "ok"}
-        elif text == "2":
-            user.onboarding_step = "MENU_TEAM_REJECT"
-            await db.commit()
-            await wuzapi_client.send_text_message(phone, "👥 Digite o *telefone* do funcionário que deseja rejeitar da empresa.")
             return {"status": "ok"}
         elif text == "3":
             user.onboarding_step = "MENU_TEAM_LIMIT_TEL"
@@ -206,20 +205,46 @@ class MenuService:
             await wuzapi_client.send_text_message(phone, "💸 Digite o *telefone* do funcionário para definir o limite.")
             return {"status": "ok"}
         elif text == "4":
+            user.onboarding_step = "MENU_TEAM_EDIT_TEL"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "✏️ Digite o *telefone* do funcionário que deseja editar (Ex: 5511999999999).")
+            return {"status": "ok"}
+        elif text == "5":
+            user.onboarding_step = "MENU_TEAM_DELETE_TEL"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "❌ Digite o *telefone* do funcionário que deseja excluir/desativar.")
+            return {"status": "ok"}
+        elif text == "6":
             return await self.send_main_menu(phone, user, db)
         else:
-            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida.")
+            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida. Escolha de 1 a 6.")
             return {"status": "ok"}
+
+    async def handle_team_list(self, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        users_query = select(User).where(User.company_id == company.id)
+        res = await db.execute(users_query)
+        company_users = res.scalars().all()
+        
+        if not company_users:
+            await wuzapi_client.send_text_message(phone, "📋 Sua equipe ainda está vazia.")
+            return await self.send_team_menu(phone, user, db)
+            
+        msg = "📋 *Lista de Funcionários:*\n\n"
+        for u in company_users:
+            status = "✅ Ativo" if u.is_approved else "⏳ Pendente"
+            role = "Gestor" if u.role == UserRole.ADMIN else "Membro"
+            limite = f"R$ {float(u.monthly_limit):.2f}" if u.monthly_limit else "Ilimitado"
+            nome = u.name or "Sem Nome"
+            msg += f"• *{nome}* ({u.phone})\n"
+            msg += f"  Status: {status} | {role} | Limite: {limite}\n\n"
+            
+        await wuzapi_client.send_text_message(phone, msg)
+        return await self.send_team_menu(phone, user, db)
 
     async def handle_team_accept_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
         user.onboarding_step = None
         await db.commit()
         return await command_handler.handle_aceitar_recusar(f"ACEITAR {text}", phone, user, company, db)
-
-    async def handle_team_reject_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
-        user.onboarding_step = None
-        await db.commit()
-        return await command_handler.handle_aceitar_recusar(f"RECUSAR {text}", phone, user, company, db)
 
     async def handle_team_limit_tel_step(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
         user.onboarding_step = f"MENU_TEAM_LIMIT_VAL_{text.strip()}"
@@ -234,6 +259,121 @@ class MenuService:
         user.onboarding_step = None
         await db.commit()
         return await command_handler.handle_limite(f"LIMITE {target_phone} {text}", phone, user, company, db)
+
+    async def handle_team_edit_tel_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        target_phone = text.replace("+", "").replace("-", "").strip()
+        user.onboarding_step = f"MENU_TEAM_EDIT_FIELD_{target_phone}"
+        await db.commit()
+        
+        msg = (
+            "✏️ O que você deseja editar neste funcionário?\n\n"
+            "1️⃣ - Nome Completo\n"
+            "2️⃣ - Setor / Departamento\n"
+            "3️⃣ - Papel (Promover a Gestor / Rebaixar a Membro)\n\n"
+            "_Digite CANCELAR para abortar._"
+        )
+        await wuzapi_client.send_text_message(phone, msg)
+        return {"status": "ok"}
+
+    async def handle_team_edit_field_step(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        parts = user.onboarding_step.split("_", 4)
+        target_phone = parts[4] if len(parts) > 4 else ""
+        
+        if text not in ["1", "2", "3"]:
+            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida. Digite 1, 2 ou 3.")
+            return {"status": "ok"}
+            
+        user.onboarding_step = f"MENU_TEAM_EDIT_VAL_{target_phone}_{text}"
+        await db.commit()
+        
+        if text == "1":
+            await wuzapi_client.send_text_message(phone, "Digite o *novo nome completo*:")
+        elif text == "2":
+            await wuzapi_client.send_text_message(phone, "Digite o *novo setor/departamento* (Ex: Vendas):")
+        elif text == "3":
+            await wuzapi_client.send_text_message(phone, "Qual será o novo papel?\n\n*1* - Membro Comum\n*2* - Gestor (Admin)")
+            
+        return {"status": "ok"}
+
+    async def handle_team_edit_val_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        parts = user.onboarding_step.split("_", 5)
+        target_phone = parts[4] if len(parts) > 4 else ""
+        field = parts[5] if len(parts) > 5 else ""
+        
+        user.onboarding_step = None
+        
+        clean_digits = "".join(c for c in target_phone if c.isdigit())
+        search_digits = clean_digits[-8:] if len(clean_digits) >= 8 else clean_digits
+        
+        t_user_query = select(User).where(User.phone.like(f"%{search_digits}%"), User.company_id == company.id)
+        t_user_res = await db.execute(t_user_query)
+        t_user = t_user_res.scalars().first()
+        
+        if not t_user:
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, f"❌ Funcionário não encontrado com telefone {target_phone}.")
+            return await self.send_team_menu(phone, user, db)
+            
+        if field == "1":
+            t_user.name = text.strip()
+            msg = f"✅ Nome alterado com sucesso para *{t_user.name}*."
+        elif field == "2":
+            t_user.department = text.strip()
+            msg = f"✅ Setor alterado com sucesso para *{t_user.department}*."
+        elif field == "3":
+            if text == "1":
+                t_user.role = UserRole.EMPLOYEE
+                msg = f"✅ Permissões de {t_user.name} alteradas para *Membro Comum*."
+            elif text == "2":
+                t_user.role = UserRole.ADMIN
+                msg = f"✅ Permissões de {t_user.name} alteradas para *Gestor (Admin)*."
+            else:
+                msg = "🚫 Opção inválida. Alteração cancelada."
+        
+        await db.commit()
+        await wuzapi_client.send_text_message(phone, msg)
+        return await self.send_team_menu(phone, user, db)
+
+    async def handle_team_delete_tel_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        target_phone = text.replace("+", "").replace("-", "").strip()
+        user.onboarding_step = f"MENU_TEAM_DELETE_CONFIRM_{target_phone}"
+        await db.commit()
+        
+        await wuzapi_client.send_text_message(phone, "⚠️ *Tem certeza* que deseja excluir esse funcionário e desvinculá-lo da empresa?\n\nResponda *SIM* para confirmar ou *CANCELAR* para voltar.")
+        return {"status": "ok"}
+
+    async def handle_team_delete_confirm_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        parts = user.onboarding_step.split("_", 4)
+        target_phone = parts[4] if len(parts) > 4 else ""
+        
+        if text.upper().strip() in ["SIM", "S", "YES", "Y"]:
+            user.onboarding_step = None
+            
+            clean_digits = "".join(c for c in target_phone if c.isdigit())
+            search_digits = clean_digits[-8:] if len(clean_digits) >= 8 else clean_digits
+            
+            t_user_query = select(User).where(User.phone.like(f"%{search_digits}%"), User.company_id == company.id)
+            t_user_res = await db.execute(t_user_query)
+            t_user = t_user_res.scalars().first()
+            
+            if not t_user:
+                await db.commit()
+                await wuzapi_client.send_text_message(phone, f"❌ Funcionário não encontrado com telefone {target_phone}.")
+                return await self.send_team_menu(phone, user, db)
+                
+            t_user.company_id = None
+            t_user.is_approved = False
+            t_user.role = UserRole.EMPLOYEE # Remove previlégios caso fosse admin
+            
+            await db.commit()
+            await wuzapi_client.send_text_message(t_user.phone, f"🚫 O seu vínculo com a empresa *{company.name}* foi removido pelo Gestor.")
+            await wuzapi_client.send_text_message(phone, f"✅ O funcionário *{t_user.name or t_user.phone}* foi removido da equipe com sucesso.")
+            return await self.send_team_menu(phone, user, db)
+        else:
+            user.onboarding_step = None
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🚫 Exclusão cancelada.")
+            return await self.send_team_menu(phone, user, db)
 
     async def send_report_menu(self, phone: str, user: User, db: AsyncSession) -> dict:
         user.onboarding_step = "MENU_REPORT"

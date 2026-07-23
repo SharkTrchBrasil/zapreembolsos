@@ -290,6 +290,18 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             return await menu_service.handle_team_limit_tel_step(user, clean_text, phone, db)
         elif user.onboarding_step.startswith("MENU_TEAM_LIMIT_VAL_"):
             return await menu_service.handle_team_limit_val_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM_EDIT_TEL":
+            return await menu_service.handle_team_edit_tel_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step.startswith("MENU_TEAM_EDIT_FIELD_"):
+            return await menu_service.handle_team_edit_field_step(user, clean_text, phone, db)
+        elif user.onboarding_step.startswith("MENU_TEAM_EDIT_VAL_"):
+            return await menu_service.handle_team_edit_val_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM_DELETE_TEL":
+            return await menu_service.handle_team_delete_tel_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step.startswith("MENU_TEAM_DELETE_CONFIRM_"):
+            return await menu_service.handle_team_delete_confirm_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step.startswith("MENU_TEAM_LIMIT_VAL_"):
+            return await menu_service.handle_team_limit_val_step(user, clean_text, phone, company, db)
         elif user.onboarding_step == "MENU_REPORT":
             return await menu_service.handle_report_menu(user, clean_text, phone, company, db)
         elif user.onboarding_step == "REPORT_MENU": # Backwards compatibility for old state
