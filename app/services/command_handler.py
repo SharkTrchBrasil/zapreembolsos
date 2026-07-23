@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 from app.models import User, Company, Expense, UserRole, ExpenseStatus, PlanType, ExpenseCategory
 from app.services.wuzapi_service import wuzapi_client
@@ -142,7 +143,7 @@ class CommandHandler:
             return await self.handle_ranking(phone, company, db)
 
         # 3. Montagem de Filtros no Banco de Dados
-        exp_query = select(Expense).where(Expense.company_id == company.id)
+        exp_query = select(Expense).options(joinedload(Expense.user)).where(Expense.company_id == company.id)
 
         # Filtro de Pessoa (Funcionário Específico)
         target_person_name = nlu.get("person_name")
@@ -214,11 +215,20 @@ class CommandHandler:
         approved_expenses = [e for e in all_expenses if e.status in (ExpenseStatus.APPROVED, ExpenseStatus.REIMBURSED)]
 
         by_category = {}
+        by_user = {}
         for e in all_expenses:
             cat_name = e.category.value if hasattr(e.category, 'value') else str(e.category)
             by_category[cat_name] = by_category.get(cat_name, 0.0) + float(e.amount)
+            
+            user_name = e.user.name if e.user and e.user.name else e.user_phone
+            by_user[user_name] = by_user.get(user_name, 0.0) + float(e.amount)
 
         cat_summary = "\n".join([f"• *{cat}:* R$ {amt:.2f}" for cat, amt in by_category.items()]) or "Nenhuma despesa"
+        
+        user_summary = ""
+        if len(by_user) > 1 or (not target_person_name and len(by_user) == 1):
+            user_summary = "\n👤 *Por Funcionário:*\n" + "\n".join([f"• *{u}:* R$ {amt:.2f}" for u, amt in sorted(by_user.items(), key=lambda x: x[1], reverse=True)]) + "\n"
+
         title_person = f" - {target_person_name}" if target_person_name else ""
 
         report_msg = (
@@ -227,6 +237,7 @@ class CommandHandler:
             f"✅ *Aprovadas:* R$ {sum(e.amount for e in approved_expenses):.2f}\n"
             f"⏳ *Pendentes:* {len(pending_expenses)} (R$ {sum(e.amount for e in pending_expenses):.2f})\n\n"
             f"🏷️ *Por Categoria:*\n{cat_summary}\n"
+            f"{user_summary}"
         )
         
         if pending_expenses and user.role == UserRole.ADMIN:
@@ -245,9 +256,11 @@ class CommandHandler:
             start_idx = (page - 1) * per_page
             end_idx = start_idx + per_page
             
-            report_msg += f"\n📋 *Despesas Pendentes de Aprovação (Pág {page}/{total_pages}):*\n"
+            report_msg += f"\n📋 *Despesas Pendentes (Pág {page}/{total_pages}):*\n"
             for p in pending_expenses[start_idx:end_idx]:
-                report_msg += f"• [{p.id[:4]}] {p.merchant_name} (R$ {p.amount:.2f})\n"
+                p_user_name = p.user.name if p.user and p.user.name else p.user_phone
+                p_date = p.expense_date.strftime("%d/%m") if p.expense_date else ""
+                report_msg += f"• [{p.id[:4]}] {p_user_name} - {p.merchant_name} (R$ {p.amount:.2f}) {p_date}\n"
                 
             if total_pages > page:
                 report_msg += f"\n💡 *Para ver mais pendentes, envie:* RELATORIO {page+1}"
