@@ -14,6 +14,7 @@ from app.services.humanizer_service import send_humanized_message
 from app.services.command_handler import command_handler
 from app.services.expense_service import expense_service
 from app.services.onboarding_service import onboarding_service
+from app.services.menu_service import menu_service
 from app.limiter import limiter
 from datetime import datetime, timedelta, timezone
 import logging
@@ -251,33 +252,55 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             await wuzapi_client.send_text_message(phone, "⚠️ Por favor, responda *SIM* para confirmar ou *CANCELAR* para abortar.")
             return {"status": "ok"}
 
-    # 6.6 MENU DE RELATÓRIOS (REPORT_MENU)
-    if user.onboarding_step == "REPORT_MENU":
-        if clean_text == "1":
+    # 6.6 MENUS INTERATIVOS (MENU_*)
+    if user.onboarding_step and user.onboarding_step.startswith("MENU_"):
+        # Permite cancelar a qualquer momento
+        if clean_text.upper().strip() in ["CANCELAR", "SAIR"]:
             user.onboarding_step = None
             await db.commit()
-            return await command_handler.handle_relatorio("RELATORIO", phone, user, company, db)
-        elif clean_text == "2":
-            user.onboarding_step = None
-            await db.commit()
-            return await command_handler.handle_ranking(phone, company, db)
-        elif clean_text == "3":
-            user.onboarding_step = None
-            await db.commit()
-            return await command_handler.handle_exportar("EXPORTAR", phone, user, company, db)
-        else:
-            user.onboarding_step = None
-            await db.commit()
-            await wuzapi_client.send_text_message(phone, "🚫 Operação cancelada. Voltando ao início.")
-            return {"status": "ok"}
+            await wuzapi_client.send_text_message(phone, "🚫 Operação cancelada.")
+            return await menu_service.send_main_menu(phone, user, db)
+
+        if user.onboarding_step == "MENU_MAIN":
+            return await menu_service.handle_main_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_LAUNCH":
+            return await menu_service.handle_launch_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_LAUNCH_KM":
+            return await menu_service.handle_launch_km_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_LAUNCH_MANUAL_VAL":
+            return await menu_service.handle_launch_manual_val_step(user, clean_text, phone, db)
+        elif user.onboarding_step.startswith("MENU_LAUNCH_MANUAL_DESC_"):
+            return await menu_service.handle_launch_manual_desc_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_APPROVAL":
+            return await menu_service.handle_approval_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_APPROVAL_ACCEPT":
+            return await menu_service.handle_approval_accept_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_APPROVAL_REJECT_ID":
+            return await menu_service.handle_approval_reject_id_step(user, clean_text, phone, db)
+        elif user.onboarding_step.startswith("MENU_APPROVAL_REJECT_REASON_"):
+            return await menu_service.handle_approval_reject_reason_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM":
+            return await menu_service.handle_team_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM_ACCEPT":
+            return await menu_service.handle_team_accept_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM_REJECT":
+            return await menu_service.handle_team_reject_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_TEAM_LIMIT_TEL":
+            return await menu_service.handle_team_limit_tel_step(user, clean_text, phone, db)
+        elif user.onboarding_step.startswith("MENU_TEAM_LIMIT_VAL_"):
+            return await menu_service.handle_team_limit_val_step(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_REPORT":
+            return await menu_service.handle_report_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "REPORT_MENU": # Backwards compatibility for old state
+            return await menu_service.handle_report_menu(user, clean_text, phone, company, db)
 
     # 7. Inicialização do Comando CRIAR Empresa (Atalho direto)
     if clean_text.upper().startswith("CRIAR"):
         return await command_handler.handle_criar(clean_text, phone, user, db)
 
-    # Menu de Ajuda
-    if clean_text.upper() in ["AJUDA", "MENU", "HELP"]:
-        return await command_handler.handle_ajuda(phone, user)
+    # Menu de Ajuda (Agora roteia para o Menu Principal interativo)
+    if clean_text.upper() in ["AJUDA", "MENU", "HELP", "0"]:
+        return await menu_service.send_main_menu(phone, user, db)
 
     # 8. Comando de Vinculação Manual (#CODIGO)
     if clean_text.startswith("#") or clean_text.upper().startswith("ENTRAR"):
@@ -385,18 +408,7 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
 
     # 5. Comando "RELATORIO" (suporta paginação: RELATORIO 2)
     if clean_text.upper() == "RELATORIO" or (user.role == UserRole.ADMIN and clean_text == "4"):
-        user.onboarding_step = "REPORT_MENU"
-        await db.commit()
-        report_menu = (
-            "📊 *Menu de Relatórios*\n"
-            "Responda com o número do relatório desejado:\n\n"
-            "1️⃣ - Resumo do Mês (Categorias e Funcionários)\n"
-            "2️⃣ - Ranking de Gastos\n"
-            "3️⃣ - Exportar para Excel (CSV)\n"
-            "4️⃣ - Voltar/Cancelar"
-        )
-        await wuzapi_client.send_text_message(phone, report_menu)
-        return {"status": "ok"}
+        return await menu_service.send_report_menu(phone, user, db)
     elif clean_text.upper().startswith("RELATORIO"):
         return await command_handler.handle_relatorio(clean_text, phone, user, company, db)
 
@@ -459,13 +471,8 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         
         if user and user.role == UserRole.ADMIN:
             admin_tips = (
-                "\n\n🤖 *Menu Principal (Gestor)*\n"
-                "Responda com o número desejado:\n"
-                "1️⃣ - Aprovar Pendência (se houver)\n"
-                "2️⃣ - Rejeitar Pendência (se houver)\n"
-                "3️⃣ - Acessar Painel Web\n"
-                "4️⃣ - Ver Relatório do Mês\n"
-                "5️⃣ - Exportar Despesas (CSV)\n"
+                "\n\n🤖 *Para voltar ao Menu Principal:*\n"
+                "Digite *MENU* a qualquer momento."
             )
             ai_response += admin_tips
             

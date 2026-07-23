@@ -59,28 +59,7 @@ class CommandHandler:
         return {"status": "ok"}
 
     async def handle_ajuda(self, phone: str, user: User) -> dict:
-        if user.role == UserRole.ADMIN:
-            msg = (
-                "🤖 *Menu Principal (Gestor)*\n"
-                "Responda com o número desejado:\n\n"
-                "1️⃣ - Aprovar Pendência (se houver)\n"
-                "2️⃣ - Rejeitar Pendência (se houver)\n"
-                "3️⃣ - Acessar Painel Web\n"
-                "4️⃣ - Ver Relatório do Mês\n"
-                "5️⃣ - Exportar Despesas (CSV)\n\n"
-                "💡 _Dica: Você também pode digitar diretamente os comandos completos como APROVAR [ID], REJEITAR [ID] [Motivo], ACEITAR [Telefone] ou CANCELAR._"
-            )
-        else:
-            msg = (
-                "💡 *Menu de Ajuda (Funcionário)*\n\n"
-                "Aqui estão os comandos que você pode usar a qualquer momento:\n"
-                "• *(Envie uma Imagem)* - Basta mandar a foto de um cupom ou recibo para pedir reembolso.\n"
-                "• *DESPESA [Valor] [Motivo]* - Lança uma despesa manual (se não tiver foto).\n"
-                "• *KM [Distância]* - Solicita reembolso por quilometragem rodada.\n"
-                "• *CANCELAR* - Cancela qualquer ação pendente e volta ao início."
-            )
-        
-        await wuzapi_client.send_text_message(phone, msg)
+        # Deprecated: A lógica de menu agora vive no menu_service.py e é interceptada no webhook.py
         return {"status": "ok"}
 
     async def handle_vincular(self, clean_text: str, phone: str, user: User, db: AsyncSession) -> dict:
