@@ -132,8 +132,8 @@ class ExpenseService:
                     f"{'⚠️ *Alerta: Possível Despesa Duplicada!*' if is_duplicate else ''}\n"
                     f"----------------------------------\n"
                     f"Responda este chat para decidir:\n"
-                    f"✅ *APROVAR {new_expense.id[:4]}* (ou apenas *1*)\n"
-                    f"❌ *REJEITAR {new_expense.id[:4]} [motivo]* (ou apenas *2*)"
+                    f"✅ Responda *1* (ou *APROVAR*)\n"
+                    f"❌ Responda *2* (ou *REJEITAR [motivo]*)"
                 )
                 await wuzapi_client.send_image_message(company.admin_phone, receipt_url, caption)
             elif new_expense.status == ExpenseStatus.REJECTED:

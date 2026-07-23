@@ -630,7 +630,7 @@ class CommandHandler:
                     f"📥 Nova despesa **SEM COMPROVANTE** de **{user.name or phone}**:\n"
                     f"💰 R$ {amount:.2f}\n"
                     f"📝 Motivo: {justification}\n\n"
-                    f"Responda *APROVAR {expense_id[:4]}* ou *REJEITAR {expense_id[:4]}*"
+                    f"Responda *1* para *APROVAR* ou *2* para *REJEITAR*"
                 )
                 await wuzapi_client.send_text_message(company.admin_phone, admin_alert)
         else:
@@ -694,7 +694,7 @@ class CommandHandler:
                 f"🚗 Reembolso de KM de **{user.name or phone}**:\n"
                 f"Distância: {distance} km\n"
                 f"Valor: R$ {amount:.2f}\n\n"
-                f"Responda *APROVAR {expense_id[:4]}* ou *REJEITAR {expense_id[:4]}*"
+                f"Responda *1* para *APROVAR* ou *2* para *REJEITAR*"
             )
             await wuzapi_client.send_text_message(company.admin_phone, admin_alert)
 
