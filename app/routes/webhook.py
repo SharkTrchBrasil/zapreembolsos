@@ -168,6 +168,13 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
     if was_reset:
         return {"status": "ok"}
 
+    # Busca os dados da empresa cadastrada (Global para o restante das lógicas)
+    company = None
+    if user.company_id:
+        comp_query = select(Company).where(Company.id == user.company_id)
+        comp_res = await db.execute(comp_query)
+        company = comp_res.scalar_one_or_none()
+
     # 2. Comando do Gestor para Aprovação/Recusa (Suporta 1, 01, 2, 02, ACEITAR, RECUSAR, APROVAR, REJEITAR)
     raw_upper = clean_text.upper().strip()
     if user.role == UserRole.ADMIN and user.company_id:
@@ -176,9 +183,6 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         is_shortcut = raw_upper in ["1", "01", "2", "02"]
 
         if is_user_cmd or is_exp_cmd or is_shortcut:
-            comp_query = select(Company).where(Company.id == user.company_id)
-            comp_res = await db.execute(comp_query)
-            company = comp_res.scalar_one_or_none()
             if company:
                 if is_user_cmd:
                     return await command_handler.handle_aceitar_recusar(clean_text, phone, user, company, db)
@@ -232,12 +236,9 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             
             user.onboarding_step = None
             
-            # Buscar company para usar nos handlers
-            confirm_comp = None
-            if user.company_id:
-                confirm_comp_query = select(Company).where(Company.id == user.company_id)
-                confirm_comp_res = await db.execute(confirm_comp_query)
-                confirm_comp = confirm_comp_res.scalar_one_or_none()
+            
+            # Buscar company para usar nos handlers (já foi carregada acima, mas usa a que estiver no user)
+            confirm_comp = company
             
             if action in ["APROVAR", "REJEITAR"]:
                 return await command_handler.handle_aprovar_rejeitar(f"{action} {target_id}", phone, user, confirm_comp, db, bypass_confirm=True)
@@ -342,9 +343,6 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
 
     # 8. Usuário Vinculado mas PENDENTE de aprovação pelo Gestor
     if not user.is_approved:
-        comp_query = select(Company).where(Company.id == user.company_id)
-        comp_res = await db.execute(comp_query)
-        company = comp_res.scalar_one_or_none()
         c_name = company.name if company else "Sua empresa"
 
         await wuzapi_client.send_text_message(
@@ -354,11 +352,6 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             f"Assim que ele aprovar, você poderá enviar seus cupons fiscais."
         )
         return {"status": "ok"}
-
-    # Busca os dados da empresa cadastrada
-    comp_query = select(Company).where(Company.id == user.company_id)
-    comp_res = await db.execute(comp_query)
-    company = comp_res.scalar_one_or_none()
 
     # Verificação de Vencimento do Plano de Teste / Assinatura
     if company and company.trial_ends_at:
