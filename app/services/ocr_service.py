@@ -53,7 +53,8 @@ class OCRService:
         """
 
         image_bytes = base64.b64decode(image_base64)
-        models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        # Modelos atualizados: 2.5 foi descontinuado pelo Google e 1.5 não é compatível com o novo SDK.
+        models_to_try = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
         
         content = None
         last_error = None
