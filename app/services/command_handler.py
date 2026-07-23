@@ -173,11 +173,23 @@ class CommandHandler:
                 exp_query = exp_query.where(Expense.expense_date >= s_date, Expense.expense_date <= e_date)
                 period_str = f"{s_date.strftime('%d/%m/%Y')} até {e_date.strftime('%d/%m/%Y')}"
             except Exception:
-                exp_query = exp_query.where(Expense.expense_date >= today.replace(day=1))
-                period_str = f"Mês Atual ({today.strftime('%m/%Y')})"
+                from sqlalchemy import or_
+                month_start = str(today.replace(day=1))
+                exp_query = exp_query.where(or_(
+                    Expense.expense_date >= month_start,
+                    Expense.created_at >= month_start,
+                    Expense.status == ExpenseStatus.PENDING
+                ))
+                period_str = f"Mês Atual ({today.strftime('%m/%Y')}) + Pendentes"
         else:
-            exp_query = exp_query.where(Expense.expense_date >= today.replace(day=1))
-            period_str = f"Mês Atual ({today.strftime('%m/%Y')})"
+            from sqlalchemy import or_
+            month_start = str(today.replace(day=1))
+            exp_query = exp_query.where(or_(
+                Expense.expense_date >= month_start,
+                Expense.created_at >= month_start,
+                Expense.status == ExpenseStatus.PENDING
+            ))
+            period_str = f"Mês Atual ({today.strftime('%m/%Y')}) + Pendentes"
 
         exp_res = await db.execute(exp_query)
         all_expenses = exp_res.scalars().all()
