@@ -1,11 +1,11 @@
 import uuid
 import json
 import random
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from app.database import get_db
+from app.database import get_db, AsyncSessionLocal
 from app.config import settings
 from app.models import User, Company, UserRole, PlanType, Expense, ExpenseStatus
 from app.services.wuzapi_service import wuzapi_client
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/webhook", tags=["Webhook"])
 
 @router.post("/wuzapi")
 @limiter.limit("30/minute")
-async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSession = Depends(get_db)):
+async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTasks, token: str = "", db: AsyncSession = Depends(get_db)):
     """Recebe mensagens do WuzAPI e orquestra o onboarding e gestão de comprovantes."""
     # Validação do token de segurança
     if not settings.DEBUG:
@@ -371,24 +371,37 @@ async def handle_wuzapi_webhook(request: Request, token: str = "", db: AsyncSess
     if clean_text.upper().startswith("APROVAR") or clean_text.upper().startswith("REJEITAR"):
         return await command_handler.handle_aprovar_rejeitar(clean_text, phone, user, company, db)
 
-    # 7. Processamento de Imagem (Cupom Fiscal / Recibo)
-    if image_base64:
-        return await expense_service.process_image_receipt(image_base64, phone, user, company, db)
-    elif has_media:
-        if media_url and media_key:
-            import base64
-            # Baixa a mídia nativamente
-            media_bytes = await wuzapi_client.download_media(media_url, media_key, media_type)
-            if media_bytes:
-                image_base64_encoded = base64.b64encode(media_bytes).decode('utf-8')
-                return await expense_service.process_image_receipt(image_base64_encoded, phone, user, company, db)
-        
-        # Se falhou ou não tinha url/key
-        await wuzapi_client.send_text_message(
-            phone, 
-            "📸 Recebi sua imagem! Mas falhei ao processar a foto. Certifique-se de enviá-la novamente ou usar o comando: *DESPESA 50.00 Motivo*"
-        )
+    # 7. Processamento de Imagem (Cupom Fiscal / Recibo) EM BACKGROUND (Evita Timeout/Retrys do WuzAPI)
+    if image_base64 or (has_media and media_url and media_key):
+        async def background_process_image(bg_media_url: str, bg_media_key: str, bg_media_type: str, bg_image_base64: str, bg_phone: str, bg_user_phone: str):
+            async with AsyncSessionLocal() as bg_db:
+                bg_user_query = select(User).where(User.phone == bg_user_phone)
+                bg_res = await bg_db.execute(bg_user_query)
+                bg_user = bg_res.scalar_one_or_none()
+                
+                bg_company = None
+                if bg_user and bg_user.company_id:
+                    bg_comp_query = select(Company).where(Company.id == bg_user.company_id)
+                    bg_comp_res = await bg_db.execute(bg_comp_query)
+                    bg_company = bg_comp_res.scalar_one_or_none()
+                
+                if not bg_user:
+                    return
+
+                if bg_image_base64:
+                    await expense_service.process_image_receipt(bg_image_base64, bg_phone, bg_user, bg_company, bg_db)
+                elif bg_media_url and bg_media_key:
+                    import base64
+                    media_bytes = await wuzapi_client.download_media(bg_media_url, bg_media_key, bg_media_type)
+                    if media_bytes:
+                        encoded = base64.b64encode(media_bytes).decode('utf-8')
+                        await expense_service.process_image_receipt(encoded, bg_phone, bg_user, bg_company, bg_db)
+                    else:
+                        await wuzapi_client.send_text_message(bg_phone, "📸 Falhei ao processar a foto. Envie novamente.")
+
+        background_tasks.add_task(background_process_image, media_url, media_key, media_type, image_base64, phone, user.phone)
         return {"status": "ok"}
+
 
     # 7.5. Atalhos Numéricos (Menu Rápido)
     if user and user.role == UserRole.ADMIN:
