@@ -59,6 +59,9 @@ class MenuService:
             has_approve = True
             has_reports = True
 
+        if text.upper().strip() in ["OLA", "OLÁ", "OI", "MENU", "AJUDA", "HELP", "BOM DIA", "BOA TARDE", "BOA NOITE", "START", "0"]:
+            return await self.send_main_menu(phone, user, db)
+
         if has_manage_company or has_approve or has_reports:
             if text == "1":
                 return await self.send_launch_menu(phone, user, db)
