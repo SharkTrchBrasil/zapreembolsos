@@ -216,3 +216,20 @@ async def anonymize_user(
     await db.commit()
     
     return {"status": "success", "message": "Dados do usuário foram anonimizados conforme a LGPD."}
+
+@router.get("/system/reset-database")
+@router.post("/system/reset-database")
+async def reset_database_endpoint(secret: str = "zapreembolso123"):
+    """
+    Endpoint para zerar o banco de dados e recomeçar os cadastros do zero.
+    """
+    if secret != "zapreembolso123":
+        raise HTTPException(status_code=401, detail="Secret incorreto")
+    
+    from reset_db import reset_database
+    try:
+        await reset_database()
+        return {"status": "success", "message": "🎉 Banco de dados zerado com sucesso! Prontinho para cadastros do zero."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao zerar banco: {str(e)}")
+
