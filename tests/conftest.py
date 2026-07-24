@@ -11,12 +11,19 @@ from app.models import (
     RolePermission, UserRoleModel, AuditLog
 )
 
-# In-memory SQLite for tests
-TEST_DB_URL = "sqlite+aiosqlite:///file::memory:?cache=shared"
+from sqlalchemy.pool import StaticPool
+
+# In-memory SQLite for tests (StaticPool = single shared connection)
+TEST_DB_URL = "sqlite+aiosqlite://"
 
 @pytest_asyncio.fixture
 async def db_session():
-    engine = create_async_engine(TEST_DB_URL, echo=False)
+    engine = create_async_engine(
+        TEST_DB_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
