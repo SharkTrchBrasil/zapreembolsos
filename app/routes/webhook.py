@@ -15,6 +15,7 @@ from app.services.command_handler import command_handler
 from app.services.expense_service import expense_service
 from app.services.onboarding_service import onboarding_service
 from app.services.menu_service import menu_service
+from app.services.redis_service import redis_service
 from app.limiter import limiter
 from datetime import datetime, timedelta, timezone
 import logging
@@ -105,6 +106,13 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         if info.get("IsFromMe", False):
             return {"status": "ignored", "reason": "Message from self"}
 
+        # Deduplicação de mensagens via Redis (evita processar a mesma msg 2x)
+        msg_id = info.get("Id") or info.get("MessageID", "")
+        if msg_id:
+            is_dup = await redis_service.is_message_duplicate(msg_id, ttl_seconds=120)
+            if is_dup:
+                return {"status": "ignored", "reason": "Duplicate message"}
+
         # --- Extraindo o texto e detectando Mídia ---
         has_media = False
         text = ""
@@ -125,6 +133,9 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             media_url = message["documentMessage"].get("URL")
             media_key = message["documentMessage"].get("mediaKey")
             media_type = "Document"
+        elif "audioMessage" in message:
+            has_media = True
+            media_type = "Audio"
         elif "conversation" in message and message["conversation"]:
             text = message["conversation"]
         elif "extendedTextMessage" in message:
@@ -147,7 +158,27 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         return {"status": "ignored", "reason": "No phone number extracted"}
 
     phone = str(phone).replace("@s.whatsapp.net", "").replace("+", "").strip()
+    
+    if not phone.isdigit() or len(phone) < 8 or len(phone) > 15:
+        return {"status": "ignored", "reason": "Invalid phone number format"}
+
+    # Rate limiting por telefone via Redis (15 msgs/min por número individual)
+    if not await redis_service.check_phone_rate_limit(phone, max_per_minute=15):
+        logger.warning(f"Rate limit atingido para telefone {phone}")
+        return {"status": "ignored", "reason": "Phone rate limited"}
+
+    if has_media and media_type == "Audio":
+        await wuzapi_client.send_text_message(phone, "🎙️ Desculpe, não consigo processar mensagens de áudio. Por favor, envie uma *mensagem de texto* ou *foto do cupom fiscal*.")
+        return {"status": "ok"}
+
     clean_text = text.strip() if text else ""
+    
+    if len(clean_text) > 2000:
+        clean_text = clean_text[:2000]
+        logger.warning(f"Texto truncado para o limite de 2000 caracteres (Telefone: {phone})")
+        
+    import re
+    clean_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', clean_text)
 
     if not clean_text and not has_media:
         return {"status": "ignored", "reason": "Empty message and no media"}
@@ -178,6 +209,13 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
     # 2. Comando do Gestor para Aprovação/Recusa (Suporta 1, 01, 2, 02, ACEITAR, RECUSAR, APROVAR, REJEITAR)
     raw_upper = clean_text.upper().strip()
     if user.role == UserRole.ADMIN and user.company_id:
+        if user.delegated_to and user.delegation_expires_at and user.delegation_expires_at > datetime.now(timezone.utc):
+            is_exp_cmd_temp = raw_upper.startswith("APROVAR") or raw_upper.startswith("REJEITAR") or raw_upper in ["1", "01", "2", "02"]
+            if is_exp_cmd_temp:
+                await wuzapi_client.send_text_message(phone, f"⚠️ Suas aprovações estão delegadas para {user.delegated_to}. Comando encaminhado.")
+                await wuzapi_client.send_text_message(user.delegated_to, f"O gestor titular encaminhou a ação: {clean_text}. Por favor, envie este comando para confirmar.")
+                return {"status": "ok"}
+                
         is_user_cmd = raw_upper.startswith("ACEITAR") or raw_upper.startswith("RECUSAR")
         is_exp_cmd = raw_upper.startswith("APROVAR") or raw_upper.startswith("REJEITAR")
         is_shortcut = raw_upper in ["1", "01", "2", "02"]
@@ -300,12 +338,24 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
             return await menu_service.handle_team_delete_tel_step(user, clean_text, phone, company, db)
         elif user.onboarding_step.startswith("MENU_TEAM_DELETE_CONFIRM_"):
             return await menu_service.handle_team_delete_confirm_step(user, clean_text, phone, company, db)
-        elif user.onboarding_step.startswith("MENU_TEAM_LIMIT_VAL_"):
-            return await menu_service.handle_team_limit_val_step(user, clean_text, phone, company, db)
         elif user.onboarding_step == "MENU_REPORT":
             return await menu_service.handle_report_menu(user, clean_text, phone, company, db)
         elif user.onboarding_step == "REPORT_MENU": # Backwards compatibility for old state
             return await menu_service.handle_report_menu(user, clean_text, phone, company, db)
+        elif user.onboarding_step == "MENU_SETTINGS":
+            return await menu_service.handle_company_settings_menu(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_DEPT":
+            return await menu_service.handle_settings_dept_menu(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_DEPT_ADD":
+            return await menu_service.handle_settings_dept_add(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_DEPT_DEL":
+            return await menu_service.handle_settings_dept_del(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_CAT":
+            return await menu_service.handle_settings_cat_menu(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_CAT_ADD":
+            return await menu_service.handle_settings_cat_add(user, clean_text, phone, db)
+        elif user.onboarding_step == "MENU_SETTINGS_CAT_DEL":
+            return await menu_service.handle_settings_cat_del(user, clean_text, phone, db)
 
     # 7. Inicialização do Comando CRIAR Empresa (Atalho direto)
     if clean_text.upper().startswith("CRIAR"):
@@ -470,8 +520,39 @@ async def handle_wuzapi_webhook(request: Request, background_tasks: BackgroundTa
         elif clean_text == "6":
             return await command_handler.handle_ajuda(phone, user)
 
-    # 8. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
+    # 8. Comandos Avançados de Despesa (CANCELAR, REENVIAR, EDITAR, DELEGAR)
     if clean_text:
+        raw_cmd = clean_text.upper().strip()
+        if raw_cmd.startswith("CANCELAR "):
+            return await command_handler.handle_cancelar_despesa(clean_text, phone, user, company, db)
+        elif raw_cmd.startswith("REENVIAR "):
+            return await command_handler.handle_reenviar_despesa(clean_text, phone, user, company, db)
+        elif raw_cmd.startswith("DELEGAR "):
+            return await command_handler.handle_delegar(clean_text, phone, user, company, db)
+        elif raw_cmd.startswith("EDITAR "):
+            # A implementar se sobrar tempo, por enquanto cai no bot default ou dá msg
+            await wuzapi_client.send_text_message(phone, "⚙️ O recurso de edição direta está em construção. Por enquanto, cancele a despesa e envie novamente.")
+            return {"status": "ok"}
+
+    # 9. Mensagem não reconhecida (Fallback / Ajuda / Interceptor IA)
+    if clean_text:
+        raw_fuzzy = clean_text.lower().strip()
+        if raw_fuzzy in ["aprova", "aprovo", "aprovado"]:
+            await wuzapi_client.send_text_message(phone, "💡 Você quis dizer *APROVAR*? Digite o comando correto.")
+            return {"status": "ok"}
+        elif raw_fuzzy in ["rejeita", "rejeito"]:
+            await wuzapi_client.send_text_message(phone, "💡 Você quis dizer *REJEITAR*? Digite o comando correto.")
+            return {"status": "ok"}
+        elif raw_fuzzy in ["relat", "relatório"]:
+            await wuzapi_client.send_text_message(phone, "💡 Você quis dizer *RELATORIO*? Digite o comando correto.")
+            return {"status": "ok"}
+        elif raw_fuzzy == "exporta":
+            await wuzapi_client.send_text_message(phone, "💡 Você quis dizer *EXPORTAR*? Digite o comando correto.")
+            return {"status": "ok"}
+        elif raw_fuzzy == "cancela":
+            await wuzapi_client.send_text_message(phone, "💡 Você quis dizer *CANCELAR*? Digite o comando correto.")
+            return {"status": "ok"}
+            
         ai_response = await chatbot_service.generate_response(clean_text, user_role=user.role.value if user else None)
         
         if user and user.role == UserRole.ADMIN:

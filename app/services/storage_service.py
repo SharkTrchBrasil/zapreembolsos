@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import boto3
+import asyncio
 from io import BytesIO
 from botocore.exceptions import ClientError, BotoCoreError
 from app.config import settings
@@ -49,61 +50,67 @@ class StorageService:
 
         return self._s3_client
 
-    def upload_image(self, file_bytes: bytes, file_name: str, content_type: str = "image/jpeg") -> str:
+    async def upload_image(self, file_bytes: bytes, file_name: str, content_type: str = "image/jpeg") -> str:
         """
         Faz o upload da imagem pro S3 e retorna a key gerada.
         Usa upload_fileobj com BytesIO (padrão Menuhub).
         Se as credenciais não estiverem configuradas, salva localmente.
         """
-        if not settings.AWS_ACCESS_KEY_ID:
-            # Fallback para desenvolvimento local
-            os.makedirs("uploads", exist_ok=True)
-            local_path = os.path.join("uploads", file_name.replace("/", "_"))
-            with open(local_path, "wb") as f:
-                f.write(file_bytes)
-            return local_path
+        def _upload_sync():
+            if not settings.AWS_ACCESS_KEY_ID:
+                # Fallback para desenvolvimento local
+                os.makedirs("uploads", exist_ok=True)
+                local_path = os.path.join("uploads", file_name.replace("/", "_"))
+                with open(local_path, "wb") as f:
+                    f.write(file_bytes)
+                return local_path
 
-        s3 = self._get_s3_client()
-        if not s3:
-            raise Exception("Cliente S3 não disponível. Verifique credenciais AWS.")
+            s3 = self._get_s3_client()
+            if not s3:
+                raise Exception("Cliente S3 não disponível. Verifique credenciais AWS.")
 
-        try:
-            file_obj = BytesIO(file_bytes)
-            s3.upload_fileobj(
-                file_obj,
-                self.bucket_name,
-                file_name,
-                ExtraArgs={
-                    'ContentType': content_type,
-                    'CacheControl': 'public, max-age=31536000, immutable',
-                }
-            )
-            logger.info(f"✅ Upload S3 concluído: {file_name} ({len(file_bytes)} bytes)")
-            return file_name
-        except ClientError as e:
-            logger.error(f"[S3 Error] Falha no upload: {e}", exc_info=True)
-            raise e
+            try:
+                file_obj = BytesIO(file_bytes)
+                s3.upload_fileobj(
+                    file_obj,
+                    self.bucket_name,
+                    file_name,
+                    ExtraArgs={
+                        'ContentType': content_type,
+                        'CacheControl': 'public, max-age=31536000, immutable',
+                    }
+                )
+                logger.info(f"✅ Upload S3 concluído: {file_name} ({len(file_bytes)} bytes)")
+                return file_name
+            except ClientError as e:
+                logger.error(f"[S3 Error] Falha no upload: {e}", exc_info=True)
+                raise e
 
-    def generate_presigned_url(self, file_key: str, expiration: int = 3600) -> str:
+        return await asyncio.to_thread(_upload_sync)
+
+    async def generate_presigned_url(self, file_key: str, expiration: int = 3600) -> str:
         """
         Gera uma URL temporária (presigned) para visualização do comprovante no painel ou WhatsApp.
         """
-        if not settings.AWS_ACCESS_KEY_ID:
-            return f"http://localhost:8000/static/uploads/{file_key}"
+        def _generate_sync():
+            if not settings.AWS_ACCESS_KEY_ID:
+                return f"http://localhost:8000/static/uploads/{file_key}"
 
-        s3 = self._get_s3_client()
-        if not s3:
-            return ""
+            s3 = self._get_s3_client()
+            if not s3:
+                return ""
 
-        try:
-            url = s3.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': self.bucket_name, 'Key': file_key},
-                ExpiresIn=expiration
-            )
-            return url
-        except ClientError as e:
-            logger.error(f"[S3 Error] Falha ao gerar URL presigned: {e}")
-            return ""
+            try:
+                url = s3.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': self.bucket_name, 'Key': file_key},
+                    ExpiresIn=expiration
+                )
+                return url
+            except ClientError as e:
+                logger.error(f"[S3 Error] Falha ao gerar URL presigned: {e}")
+                return ""
+                
+        return await asyncio.to_thread(_generate_sync)
 
 storage_service = StorageService()

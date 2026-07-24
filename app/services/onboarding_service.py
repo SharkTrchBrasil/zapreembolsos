@@ -40,7 +40,11 @@ class OnboardingService:
 
     async def handle_lead_onboarding(self, user: User, clean_text: str, phone: str, db: AsyncSession) -> dict:
         if user.onboarding_step == "LEAD_NAME":
-            user.name = clean_text.strip()
+            name = clean_text.strip()
+            if len(name) < 2 or name.isdigit():
+                await wuzapi_client.send_text_message(phone, "❌ Por favor, informe um nome real (ex: João Silva):")
+                return {"status": "ok"}
+            user.name = name
             user.onboarding_step = "LEAD_EMAIL"
             await db.commit()
             await wuzapi_client.send_text_message(
@@ -50,7 +54,13 @@ class OnboardingService:
             return {"status": "ok"}
 
         elif user.onboarding_step == "LEAD_EMAIL":
-            user.email = clean_text.strip()
+            import re
+            email = clean_text.strip()
+            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                await wuzapi_client.send_text_message(phone, "❌ E-mail inválido. Por favor, digite um e-mail válido (ex: nome@empresa.com.br):")
+                return {"status": "ok"}
+                
+            user.email = email
             user.onboarding_step = "MAIN_MENU"
             await db.commit()
             
@@ -191,6 +201,12 @@ class OnboardingService:
         comp_query = select(Company).where(Company.id == user.company_id)
         comp_res = await db.execute(comp_query)
         comp = comp_res.scalar_one_or_none()
+
+        if user.onboarding_step in ["COMP_CNPJ", "COMP_TYPE", "COMP_PLAN"] and not comp:
+            user.onboarding_step = None
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "❌ Houve um erro com o seu cadastro (Empresa não encontrada). Por favor, inicie novamente digitando *MENU*.")
+            return {"status": "error"}
 
         if user.onboarding_step == "COMP_NAME":
             company_name = clean_text.strip()

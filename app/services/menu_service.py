@@ -9,20 +9,32 @@ logger = logging.getLogger("menu_service")
 
 class MenuService:
     async def send_main_menu(self, phone: str, user: User, db: AsyncSession) -> dict:
+        from app.services.rbac_service import rbac_service
         user.onboarding_step = "MENU_MAIN"
         await db.commit()
         
-        if user.role == UserRole.ADMIN:
-            msg = (
-                "🤖 *Menu Principal (Gestor)*\n"
-                "Responda com o número desejado:\n\n"
-                "1️⃣ - 📝 Lançamentos Manuais\n"
-                "2️⃣ - ✅ Central de Aprovações\n"
-                "3️⃣ - 📊 Relatórios e Exportações\n"
-                "4️⃣ - 👥 Gestão de Equipe\n"
-                "5️⃣ - 🌐 Acessar Painel Web\n\n"
-                "💡 _Dica: Digite CANCELAR a qualquer momento para voltar._"
-            )
+        has_manage_company = await rbac_service.has_permission(db, phone, "manage_company")
+        has_approve = await rbac_service.has_permission(db, phone, "approve_expenses")
+        has_reports = await rbac_service.has_permission(db, phone, "view_reports")
+        
+        # Legacy fallback if no roles defined yet but user is ADMIN
+        if user.role == UserRole.ADMIN and not (has_manage_company or has_approve or has_reports):
+            has_manage_company = True
+            has_approve = True
+            has_reports = True
+        
+        if has_manage_company or has_approve or has_reports:
+            msg = "🤖 *Menu Principal (Gestor)*\nResponda com o número desejado:\n\n"
+            msg += "1️⃣ - 📝 Lançamentos Manuais\n"
+            if has_approve:
+                msg += "2️⃣ - ✅ Central de Aprovações\n"
+            if has_reports:
+                msg += "3️⃣ - 📊 Relatórios e Exportações\n"
+            if has_manage_company:
+                msg += "4️⃣ - 👥 Gestão de Equipe\n"
+                msg += "5️⃣ - ⚙️ Configurações da Empresa\n"
+            
+            msg += "6️⃣ - 🌐 Acessar Painel Web\n\n💡 _Dica: Digite CANCELAR a qualquer momento para voltar._"
         else:
             msg = (
                 "🤖 *Menu Principal (Funcionário)*\n"
@@ -37,24 +49,35 @@ class MenuService:
         return {"status": "ok"}
 
     async def handle_main_menu(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
-        if user.role == UserRole.ADMIN:
+        from app.services.rbac_service import rbac_service
+        has_manage_company = await rbac_service.has_permission(db, phone, "manage_company")
+        has_approve = await rbac_service.has_permission(db, phone, "approve_expenses")
+        has_reports = await rbac_service.has_permission(db, phone, "view_reports")
+        
+        if user.role == UserRole.ADMIN and not (has_manage_company or has_approve or has_reports):
+            has_manage_company = True
+            has_approve = True
+            has_reports = True
+
+        if has_manage_company or has_approve or has_reports:
             if text == "1":
                 return await self.send_launch_menu(phone, user, db)
-            elif text == "2":
+            elif text == "2" and has_approve:
                 return await self.send_approval_menu(phone, user, db)
-            elif text == "3":
+            elif text == "3" and has_reports:
                 return await self.send_report_menu(phone, user, db)
-            elif text == "4":
+            elif text == "4" and has_manage_company:
                 return await self.send_team_menu(phone, user, db)
-            elif text == "5":
+            elif text == "5" and has_manage_company:
+                return await self.send_company_settings_menu(phone, user, db)
+            elif text == "6":
                 user.onboarding_step = None
                 await db.commit()
-                # Assuming generic link for now
                 painel_url = "https://app.zapreembolso.com.br"
                 await wuzapi_client.send_text_message(phone, f"🌐 *Acesse o Painel Web:* {painel_url}")
                 return {"status": "ok"}
             else:
-                await wuzapi_client.send_text_message(phone, "🚫 Opção inválida. Digite de 1 a 5, ou CANCELAR para sair.")
+                await wuzapi_client.send_text_message(phone, "🚫 Opção inválida ou sem permissão. Tente novamente.")
                 return {"status": "ok"}
         else:
             if text == "1":
@@ -231,12 +254,13 @@ class MenuService:
             
         msg = "📋 *Lista de Funcionários:*\n\n"
         for u in company_users:
-            status = "✅ Ativo" if u.is_approved else "⏳ Pendente"
+            status = "Ativo" if u.is_approved else "Pendente"
             role = "Gestor" if u.role == UserRole.ADMIN else "Membro"
-            limite = f"R$ {float(u.monthly_limit):.2f}" if u.monthly_limit else "Ilimitado"
             nome = u.name or "Sem Nome"
+            department = u.department or "Geral"
+            job_title = u.job_title or "Sem Cargo"
             msg += f"• *{nome}* ({u.phone})\n"
-            msg += f"  Status: {status} | {role} | Limite: {limite}\n\n"
+            msg += f"  Status: {status} | Papel: {role} | Setor: {department} | Cargo: {job_title}\n\n"
             
         await wuzapi_client.send_text_message(phone, msg)
         return await self.send_team_menu(phone, user, db)
@@ -246,6 +270,11 @@ class MenuService:
         await db.commit()
         return await command_handler.handle_aceitar_recusar(f"ACEITAR {text}", phone, user, company, db)
 
+    async def handle_team_reject_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        user.onboarding_step = None
+        await db.commit()
+        return await command_handler.handle_aceitar_recusar(f"RECUSAR {text}", phone, user, company, db)
+
     async def handle_team_limit_tel_step(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
         user.onboarding_step = f"MENU_TEAM_LIMIT_VAL_{text.strip()}"
         await db.commit()
@@ -253,12 +282,55 @@ class MenuService:
         return {"status": "ok"}
 
     async def handle_team_limit_val_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
+        from app.models import PolicyRule
         parts = user.onboarding_step.split("_", 4)
         target_phone = parts[4] if len(parts) > 4 else ""
         
         user.onboarding_step = None
+        
+        clean_digits = "".join(c for c in target_phone if c.isdigit())
+        search_digits = clean_digits[-8:] if len(clean_digits) >= 8 else clean_digits
+        t_user_query = select(User).where(User.phone.like(f"%{search_digits}%"), User.company_id == company.id)
+        t_user_res = await db.execute(t_user_query)
+        t_user = t_user_res.scalars().first()
+        
+        if not t_user:
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, f"❌ Funcionário não encontrado com telefone {target_phone}.")
+            return await self.send_team_menu(phone, user, db)
+        
+        try:
+            val_str = text.replace("R$", "").replace(",", ".").strip()
+            max_amount = float(val_str)
+        except ValueError:
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "❌ Valor inválido. Use números, exemplo: 60.00")
+            return await self.send_team_menu(phone, user, db)
+        
+        query = select(PolicyRule).where(
+            PolicyRule.company_id == company.id,
+            PolicyRule.category_id == None
+        )
+        res = await db.execute(query)
+        rule = res.scalars().first()
+        
+        if rule:
+            rule.max_amount = max_amount
+            rule.is_active = True
+        else:
+            import uuid
+            rule = PolicyRule(
+                id=str(uuid.uuid4()),
+                company_id=company.id,
+                category_id=None,
+                max_amount=max_amount,
+                requires_receipt=True
+            )
+            db.add(rule)
+            
         await db.commit()
-        return await command_handler.handle_limite(f"LIMITE {target_phone} {text}", phone, user, company, db)
+        await wuzapi_client.send_text_message(phone, f"✅ Limite global atualizado para *R$ {max_amount:.2f}* para a empresa (aplicado ao funcionário).")
+        return await self.send_team_menu(phone, user, db)
 
     async def handle_team_edit_tel_step(self, user: User, text: str, phone: str, company: Company, db: AsyncSession) -> dict:
         target_phone = text.replace("+", "").replace("-", "").strip()
@@ -314,21 +386,20 @@ class MenuService:
             await wuzapi_client.send_text_message(phone, f"❌ Funcionário não encontrado com telefone {target_phone}.")
             return await self.send_team_menu(phone, user, db)
             
+        msg = "🚫 Campo inválido. Alteração cancelada."
         if field == "1":
             t_user.name = text.strip()
             msg = f"✅ Nome alterado com sucesso para *{t_user.name}*."
         elif field == "2":
             t_user.department = text.strip()
             msg = f"✅ Setor alterado com sucesso para *{t_user.department}*."
-        elif field == "3":
+        else:
             if text == "1":
                 t_user.role = UserRole.EMPLOYEE
                 msg = f"✅ Permissões de {t_user.name} alteradas para *Membro Comum*."
             elif text == "2":
                 t_user.role = UserRole.ADMIN
                 msg = f"✅ Permissões de {t_user.name} alteradas para *Gestor (Admin)*."
-            else:
-                msg = "🚫 Opção inválida. Alteração cancelada."
         
         await db.commit()
         await wuzapi_client.send_text_message(phone, msg)
@@ -407,5 +478,157 @@ class MenuService:
         else:
             await wuzapi_client.send_text_message(phone, "🚫 Opção inválida.")
             return {"status": "ok"}
+
+    async def send_company_settings_menu(self, phone: str, user: User, db: AsyncSession) -> dict:
+        user.onboarding_step = "MENU_SETTINGS"
+        await db.commit()
+        msg = (
+            "⚙️ *Configurações da Empresa*\n"
+            "Responda com o número desejado:\n\n"
+            "1️⃣ - 🏢 Gerenciar Departamentos\n"
+            "2️⃣ - 🏷️ Gerenciar Categorias\n"
+            "3️⃣ - Voltar ao Menu Principal"
+        )
+        await wuzapi_client.send_text_message(phone, msg)
+        return {"status": "ok"}
+
+    async def handle_company_settings_menu(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        if text == "1":
+            user.onboarding_step = "MENU_SETTINGS_DEPT"
+            await db.commit()
+            msg = (
+                "🏢 *Gerenciar Departamentos*\n\n"
+                "1️⃣ - ➕ Criar novo departamento\n"
+                "2️⃣ - 📋 Listar departamentos\n"
+                "3️⃣ - 🗑️ Excluir departamento\n"
+                "4️⃣ - Voltar"
+            )
+            await wuzapi_client.send_text_message(phone, msg)
+            return {"status": "ok"}
+        elif text == "2":
+            user.onboarding_step = "MENU_SETTINGS_CAT"
+            await db.commit()
+            msg = (
+                "🏷️ *Gerenciar Categorias*\n\n"
+                "1️⃣ - ➕ Criar nova categoria\n"
+                "2️⃣ - 📋 Listar categorias\n"
+                "3️⃣ - 🗑️ Excluir categoria\n"
+                "4️⃣ - Voltar"
+            )
+            await wuzapi_client.send_text_message(phone, msg)
+            return {"status": "ok"}
+        elif text == "3":
+            return await self.send_main_menu(phone, user, db)
+        else:
+            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida.")
+            return {"status": "ok"}
+
+    # Menu Departamentos
+    async def handle_settings_dept_menu(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        if text == "1":
+            user.onboarding_step = "MENU_SETTINGS_DEPT_ADD"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🏢 Digite o *nome* do novo departamento:")
+            return {"status": "ok"}
+        elif text == "2":
+            from app.models import Department
+            query = select(Department).where(Department.company_id == user.company_id)
+            res = await db.execute(query)
+            depts = res.scalars().all()
+            if not depts:
+                await wuzapi_client.send_text_message(phone, "Nenhum departamento cadastrado.")
+            else:
+                msg = "📋 *Departamentos da Empresa:*\n\n"
+                for d in depts:
+                    msg += f"• {d.name}\n"
+                await wuzapi_client.send_text_message(phone, msg)
+            return await self.send_company_settings_menu(phone, user, db)
+        elif text == "3":
+            user.onboarding_step = "MENU_SETTINGS_DEPT_DEL"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🗑️ Digite o *nome exato* do departamento que deseja excluir:")
+            return {"status": "ok"}
+        elif text == "4":
+            return await self.send_company_settings_menu(phone, user, db)
+        else:
+            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida.")
+            return {"status": "ok"}
+
+    async def handle_settings_dept_add(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        import uuid
+        from app.models import Department
+        new_dept = Department(id=str(uuid.uuid4()), company_id=user.company_id, name=text.strip())
+        db.add(new_dept)
+        await db.commit()
+        await wuzapi_client.send_text_message(phone, f"✅ Departamento *{text.strip()}* criado com sucesso!")
+        return await self.send_company_settings_menu(phone, user, db)
+
+    async def handle_settings_dept_del(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        from app.models import Department
+        query = select(Department).where(Department.company_id == user.company_id, Department.name == text.strip())
+        res = await db.execute(query)
+        dept = res.scalars().first()
+        if not dept:
+            await wuzapi_client.send_text_message(phone, f"❌ Departamento *{text.strip()}* não encontrado.")
+            return await self.send_company_settings_menu(phone, user, db)
+            
+        await db.delete(dept)
+        await db.commit()
+        await wuzapi_client.send_text_message(phone, f"✅ Departamento *{text.strip()}* excluído.")
+        return await self.send_company_settings_menu(phone, user, db)
+
+    # Menu Categorias
+    async def handle_settings_cat_menu(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        if text == "1":
+            user.onboarding_step = "MENU_SETTINGS_CAT_ADD"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🏷️ Digite o *nome* da nova categoria:")
+            return {"status": "ok"}
+        elif text == "2":
+            from app.models import Category
+            query = select(Category).where(Category.company_id == user.company_id)
+            res = await db.execute(query)
+            cats = res.scalars().all()
+            if not cats:
+                await wuzapi_client.send_text_message(phone, "Nenhuma categoria cadastrada.")
+            else:
+                msg = "📋 *Categorias da Empresa:*\n\n"
+                for c in cats:
+                    msg += f"{c.icon or '🏷️'} {c.name}\n"
+                await wuzapi_client.send_text_message(phone, msg)
+            return await self.send_company_settings_menu(phone, user, db)
+        elif text == "3":
+            user.onboarding_step = "MENU_SETTINGS_CAT_DEL"
+            await db.commit()
+            await wuzapi_client.send_text_message(phone, "🗑️ Digite o *nome exato* da categoria que deseja excluir:")
+            return {"status": "ok"}
+        elif text == "4":
+            return await self.send_company_settings_menu(phone, user, db)
+        else:
+            await wuzapi_client.send_text_message(phone, "🚫 Opção inválida.")
+            return {"status": "ok"}
+
+    async def handle_settings_cat_add(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        import uuid
+        from app.models import Category
+        new_cat = Category(id=str(uuid.uuid4()), company_id=user.company_id, name=text.strip(), icon="🏷️")
+        db.add(new_cat)
+        await db.commit()
+        await wuzapi_client.send_text_message(phone, f"✅ Categoria *{text.strip()}* criada com sucesso!")
+        return await self.send_company_settings_menu(phone, user, db)
+
+    async def handle_settings_cat_del(self, user: User, text: str, phone: str, db: AsyncSession) -> dict:
+        from app.models import Category
+        query = select(Category).where(Category.company_id == user.company_id, Category.name == text.strip())
+        res = await db.execute(query)
+        cat = res.scalars().first()
+        if not cat:
+            await wuzapi_client.send_text_message(phone, f"❌ Categoria *{text.strip()}* não encontrada.")
+            return await self.send_company_settings_menu(phone, user, db)
+            
+        await db.delete(cat)
+        await db.commit()
+        await wuzapi_client.send_text_message(phone, f"✅ Categoria *{text.strip()}* excluída.")
+        return await self.send_company_settings_menu(phone, user, db)
 
 menu_service = MenuService()

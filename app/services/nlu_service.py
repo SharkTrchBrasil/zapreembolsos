@@ -1,7 +1,7 @@
 import logging
 import json
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional
 from google import genai
 from google.genai import types
@@ -75,7 +75,10 @@ Responda APENAS o JSON puro.
                     config=config
                 )
                 if response and response.text:
-                    return json.loads(response.text.strip())
+                    try:
+                        return json.loads(response.text.strip())
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"[NLU] Erro de JSON (Gemini): {e}")
             except Exception as e:
                 logger.warning(f"[NLU] Falha na extração de NLU via Gemini: {e}")
 
@@ -91,8 +94,12 @@ Responda APENAS o JSON puro.
                 )
                 content = response.choices[0].message.content
                 if content:
-                    logger.info("[NLU] ✅ Sucesso Groq NLU!")
-                    return json.loads(content)
+                    try:
+                        parsed = json.loads(content)
+                        logger.info("[NLU] ✅ Sucesso Groq NLU!")
+                        return parsed
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"[NLU] Erro de JSON (Groq): {e}")
             except Exception as e:
                 logger.warning(f"[NLU] ❌ Falha Groq NLU: {e}")
 
@@ -108,8 +115,12 @@ Responda APENAS o JSON puro.
                 )
                 content = response.choices[0].message.content
                 if content:
-                    logger.info("[NLU] ✅ Sucesso Mistral NLU!")
-                    return json.loads(content)
+                    try:
+                        parsed = json.loads(content)
+                        logger.info("[NLU] ✅ Sucesso Mistral NLU!")
+                        return parsed
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"[NLU] Erro de JSON (Mistral): {e}")
             except Exception as e:
                 logger.warning(f"[NLU] ❌ Falha Mistral NLU: {e}")
 
@@ -128,11 +139,52 @@ Responda APENAS o JSON puro.
             "filters_count": 0
         }
         
+        today = date.today()
+        if "hoje" in clean:
+            result["start_date"] = today.strftime("%Y-%m-%d")
+            result["end_date"] = today.strftime("%Y-%m-%d")
+        elif "ontem" in clean:
+            yesterday = today - timedelta(days=1)
+            result["start_date"] = yesterday.strftime("%Y-%m-%d")
+            result["end_date"] = yesterday.strftime("%Y-%m-%d")
+        elif "semana passada" in clean:
+            last_week = today - timedelta(days=7)
+            result["start_date"] = last_week.strftime("%Y-%m-%d")
+            result["end_date"] = today.strftime("%Y-%m-%d")
+        
+        m_ultimos = re.search(r"últimos (\d+) dias", clean) or re.search(r"ultimos (\d+) dias", clean)
+        if m_ultimos:
+            dias = int(m_ultimos.group(1))
+            start_d = today - timedelta(days=dias)
+            result["start_date"] = start_d.strftime("%Y-%m-%d")
+            result["end_date"] = today.strftime("%Y-%m-%d")
+        
+        months = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5, "junho": 6, 
+                  "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12}
+        for m_name, m_num in months.items():
+            if m_name in clean:
+                import calendar
+                year = today.year
+                _, last_day = calendar.monthrange(year, m_num)
+                result["start_date"] = f"{year}-{m_num:02d}-01"
+                result["end_date"] = f"{year}-{m_num:02d}-{last_day:02d}"
+                break
+
         # Categorias
         if "combustivel" in clean or "gasolina" in clean or "posto" in clean:
             result["category"] = "COMBUSTIVEL"
         elif "alimentacao" in clean or "almoço" in clean or "jantar" in clean or "comida" in clean:
             result["category"] = "ALIMENTACAO"
+        elif "hotel" in clean or "hospedagem" in clean:
+            result["category"] = "HOSPEDAGEM"
+        elif "uber" in clean or "taxi" in clean or "táxi" in clean or "ônibus" in clean or "onibus" in clean:
+            result["category"] = "TRANSPORTE"
+        elif "oficina" in clean or "peça" in clean or "manutencao" in clean or "manutenção" in clean:
+            result["category"] = "MANUTENCAO"
+
+        m_person = re.search(r"(?:do|da|de)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)", text)
+        if m_person:
+            result["person_name"] = m_person.group(1)
 
         # Ranking
         if "quem mais gastou" in clean or "ranking" in clean or "top" in clean:

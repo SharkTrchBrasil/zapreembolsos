@@ -13,7 +13,7 @@ security = HTTPBearer()
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
@@ -40,6 +40,10 @@ async def get_current_admin(
     
     if user is None:
         raise credentials_exception
+        
+    if user.company_id is None:
+        import logging
+        logging.warning(f"Aviso: Admin user {user.phone} has no company_id assigned.")
         
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Acesso negado: Requer privilégios de Administrador")

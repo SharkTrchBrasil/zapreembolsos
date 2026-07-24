@@ -1,16 +1,17 @@
 from PIL import Image
 import io
 import re
+import asyncio
 from pyzbar.pyzbar import decode
 
 class NFCeService:
-    def decode_qr_from_image_bytes(self, image_bytes: bytes) -> str | None:
+    async def decode_qr_from_image_bytes(self, image_bytes: bytes) -> str | None:
         """
         Tenta ler um QR Code da imagem. Retorna a URL se encontrar, ou None.
         """
         try:
             image = Image.open(io.BytesIO(image_bytes))
-            decoded_objects = decode(image)
+            decoded_objects = await asyncio.to_thread(decode, image)
             
             for obj in decoded_objects:
                 data = obj.data.decode('utf-8')

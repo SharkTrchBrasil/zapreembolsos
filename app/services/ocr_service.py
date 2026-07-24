@@ -170,6 +170,12 @@ class OCRService:
             content = content.replace("```", "").strip()
         
         try:
+            import re
+            # Remove trailing commas and comments
+            content = re.sub(r',\s*}', '}', content)
+            content = re.sub(r',\s*]', ']', content)
+            content = re.sub(r'//.*', '', content)
+            content = content.lstrip('\ufeff')
             return json.loads(content)
         except json.JSONDecodeError as e:
             logger.error(f"JSON inválido retornado pela IA: {e}")
@@ -177,6 +183,9 @@ class OCRService:
 
     async def extract_receipt_from_image_base64(self, image_base64: str) -> dict:
         """Usa IA Vision para ler cupons fiscais, recibos e notas fiscais."""
+        if len(image_base64) > 15 * 1024 * 1024 * (4/3):
+            raise ValueError("A imagem é muito grande. O tamanho máximo permitido é de aproximadamente 15MB.")
+
         if not self.gemini_clients and not self.groq_client and not self.mistral_client:
             logger.warning("Nenhuma chave de API configurada. Usando fallback de teste.")
             return {
@@ -202,11 +211,15 @@ class OCRService:
             logger.info("[OCR] 🔄 Groq falhou. Tentando Mistral...")
             content = await self._try_mistral(image_base64)
 
-        # 4) Se todos falharam, esperar e tentar Gemini de novo
+        # 4) Se todos falharam, esperar e tentar Gemini de novo com backoff
         if not content:
-            logger.warning("[OCR] ⏳ Todos falharam. Aguardando 35s para retry Gemini...")
-            await asyncio.sleep(35)
-            content = await self._try_gemini(image_bytes)
+            delays = [3, 6, 10]
+            for delay in delays:
+                logger.warning(f"[OCR] ⏳ Todos falharam. Aguardando {delay}s para retry Gemini...")
+                await asyncio.sleep(delay)
+                content = await self._try_gemini(image_bytes)
+                if content:
+                    break
 
         if not content:
             raise ValueError("Não foi possível processar a imagem: Gemini, Groq e Mistral esgotaram a cota.")

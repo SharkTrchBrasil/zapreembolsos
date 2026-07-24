@@ -65,7 +65,20 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
             return "Olá, Gestor! Para ver o painel, digite RELATORIO. Para gerenciar despesas use APROVAR ou REJEITAR."
         return self.templates_data.get("default_fallback", "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo.")
 
-    async def generate_response(self, text: str, user_role: str = None) -> str:
+    def suggest_command(self, text: str) -> str | None:
+        """Sugere um comando se o texto for parecido com comandos conhecidos."""
+        clean_text = text.strip().upper()
+        commands = [
+            "APROVAR", "REJEITAR", "RELATORIO", "EXPORTAR", "CANCELAR", 
+            "REENVIAR", "DESPESA", "KM", "LIMITE", "CRIAR", "MENU", 
+            "AJUDA", "DELEGAR"
+        ]
+        for cmd in commands:
+            if clean_text.startswith(cmd) or cmd in clean_text:
+                return cmd
+        return None
+
+    async def generate_response(self, text: str, user_role: str = None, user_name: str = None, company_name: str = None, has_pending_expenses: bool = False) -> str:
         if not self.client_ready:
             return self._get_template_response(text, user_role)
 
@@ -78,6 +91,13 @@ Diretrizes de Resposta (MUITO IMPORTANTES):
             role_instruction = "O usuário é um GESTOR/ADMIN. Não peça para ele enviar fotos de recibos (embora ele possa). Diga que ele pode gerenciar aprovações e ver relatórios. (Use DASHBOARD, RELATORIO, APROVAR)."
         else:
             role_instruction = "O usuário é um FUNCIONÁRIO. Diga que para solicitar reembolso, basta enviar a FOTO do cupom fiscal ou recibo."
+
+        if user_name:
+            role_instruction += f"\nO nome do usuário é {user_name}."
+        if company_name:
+            role_instruction += f"\nA empresa é {company_name}."
+        if user_role == "ADMIN" and has_pending_expenses:
+            role_instruction += "\nO gestor tem despesas pendentes aguardando aprovação."
 
         dynamic_instruction = self.system_instruction + "\n" + role_instruction
         

@@ -18,3 +18,4 @@ cryptography>=42.0.0
 slowapi>=0.1.9
 redis>=5.0.0
 PyJWT>=2.8.0
+alembic>=1.13.0

@@ -7,7 +7,7 @@
     },
     {
       "intent": "como_funciona",
-      "keywords": ["como funciona", "o que faz", "ajuda", "duvida", "dúvida", "instrucoes", "instruções"],
+      "keywords": ["como funciona", "o que faz", "ajuda", "duvida", "dúvida", "instrucoes", "instruções", "o que é"],
       "response": "O ZapReembolso automatiza sua prestação de contas! 📸 Basta enviar a foto de um cupom fiscal ou recibo aqui no chat."
     },
     {
@@ -17,13 +17,103 @@
     },
     {
       "intent": "relatorio",
-      "keywords": ["relatorio", "relatório", "resumo", "gastos", "saldo", "mes", "mês"],
+      "keywords": ["relatorio", "relatório", "resumo", "gastos", "saldo", "mes", "mês", "como vejo"],
       "response": "💡 Gestor: envie a palavra *RELATORIO* para visualizar o resumo financeiro de reembolsos do mês."
     },
     {
       "intent": "aprovacao",
-      "keywords": ["aprovar", "aceitar", "aprovação", "aprovação", "recusar"],
+      "keywords": ["aprovar", "aceitar", "aprovação", "recusar", "pendente", "status"],
       "response": "💡 Gestor: responda com *1* para aprovar ou *2* para recusar solicitações de funcionários e comprovantes!"
+    },
+    {
+      "intent": "preco",
+      "keywords": ["preço", "plano", "quanto custa", "valor", "assinatura"],
+      "response": "Temos diversos planos para atender o tamanho da sua empresa. Por favor, verifique no nosso site as condições ou digite *MENU* para falar com o suporte."
+    },
+    {
+      "intent": "cancelar",
+      "keywords": ["cancelar", "como cancelo", "excluir", "apagar", "remover", "desfazer"],
+      "response": "Para cancelar uma despesa enviada recentemente, digite *CANCELAR* e selecione o comprovante desejado."
+    },
+    {
+      "intent": "reenviar",
+      "keywords": ["reenviar", "como reenvia", "reenvio", "mandar de novo", "tentar novamente"],
+      "response": "Se houve algum erro na leitura, basta enviar uma nova foto do comprovante, bem nítida e iluminada, e ela substituirá a anterior ou será processada como uma nova despesa."
+    },
+    {
+      "intent": "limite",
+      "keywords": ["limite", "teto", "politica", "política", "regras", "estourou"],
+      "response": "Os limites de gastos são definidos pelas políticas da sua empresa. Caso uma despesa seja rejeitada por exceder o limite, fale com seu gestor."
+    },
+    {
+      "intent": "km",
+      "keywords": ["km", "quilometragem", "distancia", "viagem", "deslocamento"],
+      "response": "Para registrar um reembolso de quilometragem, digite *KM* seguido da distância. Ex: *KM 50* para 50 quilômetros."
+    },
+    {
+      "intent": "exportar",
+      "keywords": ["exportar", "excel", "csv", "planilha", "baixar", "download"],
+      "response": "Você pode exportar seus dados de reembolso digitando o comando *EXPORTAR*. Um arquivo será gerado e enviado para você."
+    },
+    {
+      "intent": "delegar",
+      "keywords": ["delegar", "delegação", "transferir", "passar"],
+      "response": "Gestores podem delegar aprovações utilizando o comando *DELEGAR*. Assim, outro responsável poderá aprovar despesas temporariamente."
+    },
+    {
+      "intent": "equipe",
+      "keywords": ["equipe", "funcionário", "cadastro", "time", "adicionar pessoa"],
+      "response": "Para gerenciar sua equipe ou cadastrar novos funcionários, acesse o painel web ou peça suporte via *AJUDA*."
+    },
+    {
+      "intent": "codigo_empresa",
+      "keywords": ["código", "vincular", "entrar", "token", "codigo da empresa"],
+      "response": "Para vincular-se a uma empresa, você precisa do código de convite fornecido pelo seu RH. Digite o código aqui para prosseguir."
+    },
+    {
+      "intent": "departamento",
+      "keywords": ["departamento", "setor", "área", "area"],
+      "response": "Os departamentos da sua empresa determinam como suas despesas serão categorizadas no centro de custos. Qualquer alteração deve ser feita no painel web."
+    },
+    {
+      "intent": "categoria",
+      "keywords": ["categoria", "categorias", "tipos de gasto", "tipo de despesa"],
+      "response": "O sistema reconhece categorias como COMBUSTÍVEL, ALIMENTAÇÃO, HOSPEDAGEM, TRANSPORTE, MANUTENÇÃO e OUTROS. O preenchimento é automático!"
+    },
+    {
+      "intent": "seguranca",
+      "keywords": ["segurança", "privacidade", "dados", "lgpd", "seguro"],
+      "response": "Seus dados estão seguros conosco. Seguimos a LGPD e armazenamos seus comprovantes de forma criptografada na nuvem."
+    },
+    {
+      "intent": "erro",
+      "keywords": ["erro", "problema", "bug", "não funciona", "travou", "falha"],
+      "response": "Poxa, parece que algo deu errado. Tente novamente em instantes ou digite *AJUDA* para acionar nosso suporte técnico."
+    },
+    {
+      "intent": "obrigado",
+      "keywords": ["obrigado", "valeu", "thanks", "agradecido", "obrigada", "show", "top", "perfeito", "ok", "beleza"],
+      "response": "Eu que agradeço! Se precisar de mais alguma coisa, estou por aqui. 😄"
+    },
+    {
+      "intent": "despedida",
+      "keywords": ["tchau", "até logo", "adeus", "fui", "até mais", "ate", "xau"],
+      "response": "Até logo! Qualquer nova despesa, é só mandar a foto. 👋"
+    },
+    {
+      "intent": "bom_dia",
+      "keywords": ["bom dia", "dia"],
+      "response": "Bom dia! Pronto para mais um dia de trabalho? Me envie seus comprovantes de hoje!"
+    },
+    {
+      "intent": "boa_tarde",
+      "keywords": ["boa tarde", "tarde"],
+      "response": "Boa tarde! Como estão as coisas por aí? Pode mandar os recibos das suas despesas."
+    },
+    {
+      "intent": "boa_noite",
+      "keywords": ["boa noite", "noite"],
+      "response": "Boa noite! Terminando o expediente? Lembre-se de me enviar os comprovantes das despesas de hoje."
     }
   ],
   "default_fallback": "Olá! Para registrar uma despesa, envie a foto do seu cupom fiscal ou recibo. Se for gestor, envie *RELATORIO*."

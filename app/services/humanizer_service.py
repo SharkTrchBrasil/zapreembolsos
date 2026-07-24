@@ -3,7 +3,7 @@ import asyncio
 from app.services.wuzapi_service import wuzapi_client
 
 _TYPING_FLOOR_MS = 700
-_TYPING_CEIL_MS = 7000
+_TYPING_CEIL_MS = 3000
 
 def calculate_typing_delay(text_length: int) -> float:
     """Calcula o tempo de digitação (delay humanizado) em segundos baseado no tamanho do texto."""
@@ -23,8 +23,12 @@ def calculate_typing_delay(text_length: int) -> float:
     clamped_ms = max(_TYPING_FLOOR_MS, min(total_ms, _TYPING_CEIL_MS))
     return clamped_ms / 1000.0
 
-async def send_humanized_message(phone: str, text: str):
+async def send_humanized_message(phone: str, text: str, skip_delay: bool = False):
     """Envia uma mensagem simulando digitação humana."""
+    if skip_delay:
+        await wuzapi_client.send_text_message(phone, text)
+        return
+
     # 1. Envia indicador de digitando
     await wuzapi_client.send_typing_indicator(phone, is_typing=True)
     

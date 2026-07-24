@@ -1,5 +1,9 @@
 import os
+import logging
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
+
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ZapReembolso API"
@@ -32,6 +36,19 @@ class Settings(BaseSettings):
     EFI_PIX_KEY: str = "comercial@zapreembolso.com.br"
     
     REDIS_URL: str = ""
+    
+    MAX_IMAGE_SIZE_MB: int = 10
+    MAX_MESSAGE_LENGTH: int = 2000
+    ALLOWED_IMAGE_TYPES: str = "image/jpeg,image/png,image/webp"
+
+    @model_validator(mode='after')
+    def check_secrets(self) -> 'Settings':
+        if not self.DEBUG:
+            if self.WEBHOOK_SECRET == 'change_me_in_production':
+                logger.warning("WARNING: WEBHOOK_SECRET is using the default value in production!")
+            if self.JWT_SECRET == 'your_super_secret_jwt_key_here':
+                logger.warning("WARNING: JWT_SECRET is using the default value in production!")
+        return self
 
     class Config:
         env_file = ".env"

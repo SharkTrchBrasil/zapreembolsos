@@ -11,6 +11,7 @@ from app.config import settings
 import app.models
 from app.database import init_db
 from app.services.notification_service import run_daily_reminder_job, run_daily_billing_job
+from app.services.redis_service import redis_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("zapreembolso")
@@ -27,6 +28,11 @@ async def lifespan(app: FastAPI):
         logger.error(f"⚠️ Alerta: Erro ao inicializar banco de dados no startup: {e}")
 
     try:
+        await redis_service.connect()
+    except Exception as e:
+        logger.error(f"⚠️ Alerta: Erro ao conectar ao Redis: {e}")
+
+    try:
         scheduler.add_job(run_daily_reminder_job, 'cron', hour=8, minute=0)
         scheduler.add_job(run_daily_billing_job, 'cron', hour=9, minute=0)
         scheduler.start()
@@ -41,6 +47,10 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown()
     except Exception:
         pass
+    try:
+        await redis_service.disconnect()
+    except Exception:
+        pass
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -52,11 +62,12 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from fastapi.staticfiles import StaticFiles
-from app.routes import webhook, auth, dashboard
+from app.routes import webhook, auth, dashboard, api
 
 app.include_router(webhook.router, tags=["Webhook"])
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(api.router)
 
 # Cria o diretório estático se não existir
 os.makedirs("app/static/admin", exist_ok=True)
@@ -68,7 +79,11 @@ async def serve_admin_dashboard():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "app": settings.PROJECT_NAME}
+    return {
+        "status": "ok",
+        "app": settings.PROJECT_NAME,
+        "redis": "connected" if redis_service.is_connected else "disconnected"
+    }
 
 
 @app.get("/")

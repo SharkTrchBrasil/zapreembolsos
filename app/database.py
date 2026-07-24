@@ -12,7 +12,7 @@ if db_url.startswith("postgres://"):
 elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+asyncpg://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(db_url, echo=settings.DEBUG)
+engine = create_async_engine(db_url, echo=settings.DEBUG, pool_size=20, max_overflow=30, pool_pre_ping=True, pool_recycle=1800)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 class Base(DeclarativeBase):
@@ -22,7 +22,7 @@ from sqlalchemy import text
 
 async def init_db():
     async with engine.begin() as conn:
-        # Cria as tabelas caso ainda não existam
+        # Cria as tabelas caso ainda não existam (Mata as tabelas bases para garantir)
         await conn.run_sync(Base.metadata.create_all)
 
         # Garante que todas as colunas novas sejam adicionadas em tabelas pré-existentes no PostgreSQL

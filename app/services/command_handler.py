@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models import User, Company, Expense, UserRole, ExpenseStatus, PlanType, ExpenseCategory
 from app.services.wuzapi_service import wuzapi_client
 from app.services.policy_service import policy_service
+from app.services.audit_service import audit_service
 import random
 
 def generate_company_code(name: str) -> str:
@@ -14,6 +16,8 @@ def generate_company_code(name: str) -> str:
     clean_name = "".join(c for c in name if c.isalnum()).upper()[:4]
     random_num = random.randint(10, 999)
     return f"{clean_name}{random_num}"
+
+logger = logging.getLogger("command_handler")
 
 class CommandHandler:
     async def handle_criar(self, clean_text: str, phone: str, user: User, db: AsyncSession) -> dict:
@@ -33,7 +37,13 @@ class CommandHandler:
             )
             db.add(new_company)
             try:
-                await db.commit()
+                try:
+                    await db.commit()
+                except Exception as e:
+                    await db.rollback()
+                    logger.error(f"DB error: {e}")
+                    await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                    return {"status": "error"}
                 break
             except IntegrityError:
                 await db.rollback()
@@ -44,7 +54,94 @@ class CommandHandler:
         user.company_id = new_company.id
         user.role = UserRole.ADMIN
         user.name = f"Gestor ({company_name})"
-        await db.commit()
+        
+        # Seed default department
+        from app.models import Department, Category
+        default_dept = Department(
+            id=str(uuid.uuid4()),
+            company_id=new_company.id,
+            name="Geral"
+        )
+        db.add(default_dept)
+        
+        # Seed default categories
+        default_cats = [
+            ("Alimentação", "🍔"),
+            ("Transporte", "🚗"),
+            ("Hospedagem", "🏨"),
+            ("Combustível", "⛽"),
+            ("Manutenção", "🛠️"),
+            ("Outros", "📦")
+        ]
+        for cat_name, icon in default_cats:
+            db.add(Category(
+                id=str(uuid.uuid4()),
+                company_id=new_company.id,
+                name=cat_name,
+                icon=icon
+            ))
+            
+        # Seed Default Roles
+        from app.models import Role, Permission, RolePermission, UserRoleModel
+        roles_to_create = [
+            ("OWNER", True),
+            ("GESTOR_FULL", False),
+            ("GESTOR_LIMITADO", False),
+            ("APROVADOR_DEPTO", False),
+            ("EMPLOYEE", False)
+        ]
+        
+        created_roles = {}
+        for role_name, is_sys in roles_to_create:
+            r = Role(id=str(uuid.uuid4()), company_id=new_company.id, name=role_name, is_system_role=is_sys)
+            db.add(r)
+            created_roles[role_name] = r
+            
+        try:
+            await db.commit() # Commit para poder usar os IDs das Roles e buscar Permissions
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+        
+        # Atribuir todas as permissões ao OWNER
+        query_perms = select(Permission)
+        res_perms = await db.execute(query_perms)
+        all_perms = res_perms.scalars().all()
+        
+        for p in all_perms:
+            db.add(RolePermission(id=str(uuid.uuid4()), role_id=created_roles["OWNER"].id, permission_id=p.id))
+            
+            # GESTOR_FULL recebe tudo menos manage_company
+            if p.code != "manage_company":
+                db.add(RolePermission(id=str(uuid.uuid4()), role_id=created_roles["GESTOR_FULL"].id, permission_id=p.id))
+                
+            # GESTOR_LIMITADO recebe apenas relatórios
+            if p.code in ["view_reports", "export_data"]:
+                db.add(RolePermission(id=str(uuid.uuid4()), role_id=created_roles["GESTOR_LIMITADO"].id, permission_id=p.id))
+                
+            # APROVADOR_DEPTO recebe aprovação e relatórios
+            if p.code in ["approve_expenses", "view_reports"]:
+                db.add(RolePermission(id=str(uuid.uuid4()), role_id=created_roles["APROVADOR_DEPTO"].id, permission_id=p.id))
+
+        user.department_id = default_dept.id
+        
+        # Atribuir OWNER ao criador
+        db.add(UserRoleModel(
+            id=str(uuid.uuid4()),
+            user_phone=user.phone,
+            role_id=created_roles["OWNER"].id,
+            scope="COMPANY"
+        ))
+        
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
 
         welcome_admin = (
             f"🎉 *Empresa {company_name} Criada com Sucesso!*\n\n"
@@ -72,7 +169,13 @@ class CommandHandler:
             user.company_id = target_company.id
             user.role = UserRole.EMPLOYEE
             user.is_approved = False
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"DB error: {e}")
+                await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                return {"status": "error"}
 
             link_msg = (
                 f"⏳ *Solicitação enviada com sucesso!*\n\n"
@@ -250,6 +353,10 @@ class CommandHandler:
 
     async def handle_ranking(self, phone: str, company: Company, db: AsyncSession) -> dict:
         """Gera o ranking dos funcionários que mais gastaram no mês corrente."""
+        if not company:
+            await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
+            return {"status": "ok"}
+            
         today = date.today()
         exp_query = select(Expense).where(
             Expense.company_id == company.id,
@@ -270,13 +377,16 @@ class CommandHandler:
         sorted_users = sorted(user_totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
         # Busca os nomes dos usuários
+        phones_to_fetch = [u_phone for u_phone, _ in sorted_users]
+        u_query = select(User).where(User.company_id == company.id, User.phone.in_(phones_to_fetch))
+        u_res = await db.execute(u_query)
+        users_batch = {u.phone: u for u in u_res.scalars().all()}
+        
         ranking_msg = f"🏆 *Ranking de Maiores Gastos do Mês ({today.strftime('%m/%Y')})*\n\n"
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
 
         for idx, (u_phone, total) in enumerate(sorted_users):
-            u_query = select(User).where(User.phone == u_phone)
-            u_res = await db.execute(u_query)
-            u_obj = u_res.scalars().first()
+            u_obj = users_batch.get(u_phone)
             u_name = u_obj.name if (u_obj and u_obj.name) else u_phone
             u_dept = f" ({u_obj.department})" if (u_obj and u_obj.department) else ""
             ranking_msg += f"{medals[idx]} *{u_name}*{u_dept}: R$ {total:.2f}\n"
@@ -286,6 +396,10 @@ class CommandHandler:
         return {"status": "ok"}
 
     async def handle_exportar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        if not company:
+            await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
+            return {"status": "ok"}
+            
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem exportar relatórios.")
             return {"status": "ok"}
@@ -340,6 +454,10 @@ class CommandHandler:
         return {"status": "ok"}
 
     async def handle_aprovar_rejeitar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession, bypass_confirm: bool = False) -> dict:
+        if not company:
+            await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
+            return {"status": "ok"}
+            
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aprovar ou rejeitar despesas.")
             return {"status": "ok"}
@@ -389,19 +507,34 @@ class CommandHandler:
 
         exp_query = select(Expense).where(
             Expense.company_id == user.company_id,
-            Expense.status == ExpenseStatus.PENDING,
+            Expense.status.in_([ExpenseStatus.PENDING, ExpenseStatus.PARTIALLY_APPROVED]),
             Expense.id.like(f"{short_id}%")
         )
         exp_res = await db.execute(exp_query)
-        exp = exp_res.scalars().first()
+        exps = exp_res.scalars().all()
 
-        if not exp:
+        if not exps:
             await wuzapi_client.send_text_message(phone, f"❌ Despesa '{short_id}' não encontrada ou já processada.")
             return {"status": "ok"}
             
+        if len(exps) > 1:
+            msg = f"⚠️ Múltiplas despesas encontradas com o ID '{short_id}'. Por favor, seja mais específico:\n"
+            for e in exps[:5]:
+                msg += f"• *{action} {e.id[:8]}* (R$ {e.amount:.2f})\n"
+            await wuzapi_client.send_text_message(phone, msg)
+            return {"status": "ok"}
+            
+        exp = exps[0]
+            
         if not bypass_confirm:
             user.onboarding_step = f"CONFIRM_{action}_{exp.id}"
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"DB error: {e}")
+                await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                return {"status": "error"}
             
             action_pt = "aprovar" if action == "APROVAR" else "rejeitar"
             await wuzapi_client.send_text_message(
@@ -411,36 +544,123 @@ class CommandHandler:
             )
             return {"status": "ok"}
 
+        from datetime import datetime, timezone
+        from app.models import PolicyRule, ApprovalStep
+        import uuid
+        
+        # Lógica de Aprovação Dupla (Cadeia)
+        if action == "APROVAR":
+            policy_query = select(PolicyRule).where(
+                PolicyRule.company_id == exp.company_id,
+                PolicyRule.category_id == exp.category_id,
+                PolicyRule.is_active == True
+            )
+            pol_res = await db.execute(policy_query)
+            policy = pol_res.scalar_one_or_none()
+            
+            # Fallback para política global se não houver específica
+            if not policy:
+                g_query = select(PolicyRule).where(
+                    PolicyRule.company_id == exp.company_id,
+                    PolicyRule.category_id == None,
+                    PolicyRule.is_active == True
+                )
+                g_res = await db.execute(g_query)
+                policy = g_res.scalar_one_or_none()
+                
+            req_double = policy.requires_double_approval_above if policy else None
+            
+            # Cria o ApprovalStep do gestor atual
+            step_count_query = select(ApprovalStep).where(ApprovalStep.expense_id == exp.id)
+            step_count_res = await db.execute(step_count_query)
+            existing_steps = step_count_res.scalars().all()
+            
+            # Se a despesa for cara e esta for a primeira aprovação, vira PARTIALLY_APPROVED
+            if req_double is not None and exp.amount > float(req_double) and len(existing_steps) == 0:
+                new_status = ExpenseStatus.PARTIALLY_APPROVED
+                
+            step = ApprovalStep(
+                id=str(uuid.uuid4()),
+                expense_id=exp.id,
+                step_order=len(existing_steps) + 1,
+                approver_phone=phone,
+                status="APPROVED",
+                decided_at=datetime.now(timezone.utc)
+            )
+            db.add(step)
+
         exp.status = new_status
         exp.approved_by = phone
-        from datetime import datetime, timezone
         exp.approved_at = datetime.now(timezone.utc)
         
         if action == "REJEITAR":
             exp.rejection_reason = rejection_reason or "Rejeitado pelo gestor"
 
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+        
+        await audit_service.log_action(
+            db=db,
+            company_id=user.company_id,
+            user_phone=user.phone,
+            action=f"{action}_EXPENSE",
+            entity_type="Expense",
+            entity_id=exp.id,
+            new_value=exp.status.value
+        )
         
         # Converte o status para português
-        status_pt = "APROVADA" if new_status == ExpenseStatus.APPROVED else "REJEITADA"
+        if new_status == ExpenseStatus.APPROVED:
+            status_pt = "APROVADA"
+        elif new_status == ExpenseStatus.REJECTED:
+            status_pt = "REJEITADA"
+        else:
+            status_pt = "PRÉ-APROVADA (Aguardando Diretoria)"
         
         # Notifica o funcionário
         employee_msg = f"🔔 **Sua despesa foi {status_pt}!**\n📍 {exp.merchant_name} (R$ {exp.amount:.2f})\n"
         if action == "REJEITAR":
-            employee_msg += f"❌ **Motivo:** {exp.rejection_reason}"
+            employee_msg += f"❌ **Motivo:** {exp.rejection_reason}\n\n"
+            employee_msg += f"💡 _Dica: Para corrigir e reenviar, você pode digitar:_ *REENVIAR {short_id}*"
+        elif new_status == ExpenseStatus.PARTIALLY_APPROVED:
+            employee_msg += "✅ Aprovada pelo gestor local. Enviada para aprovação final da diretoria."
         else:
             employee_msg += "✅ Reembolso autorizado pelo gestor."
             
         await wuzapi_client.send_text_message(exp.user_phone, employee_msg)
 
-        await wuzapi_client.send_text_message(
-            phone,
-            f"✅ **Despesa de {exp.merchant_name} (R$ {exp.amount:.2f}) {status_pt}!** O funcionário foi notificado."
-        )
+        if new_status == ExpenseStatus.PARTIALLY_APPROVED and company and company.admin_phone:
+            # Envia para o Master Admin
+            await wuzapi_client.send_text_message(
+                company.admin_phone,
+                f"📥 *Aprovação Dupla Necessária*\n\n"
+                f"O gestor {user.name or phone} pré-aprovou a despesa de R$ {exp.amount:.2f} de {exp.merchant_name} (Func: {exp.user_phone}).\n"
+                f"Por exceder o teto, requer sua aprovação final.\n\n"
+                f"Responda *APROVAR {short_id}* ou *REJEITAR {short_id} [motivo]*."
+            )
+            
+            await wuzapi_client.send_text_message(
+                phone,
+                f"✅ **Despesa pré-aprovada!** Por exceder o limite, ela foi enviada para o administrador geral."
+            )
+        else:
+            await wuzapi_client.send_text_message(
+                phone,
+                f"✅ **Despesa de {exp.merchant_name} (R$ {exp.amount:.2f}) {status_pt}!** O funcionário foi notificado."
+            )
         return {"status": "ok"}
 
     async def handle_aceitar_recusar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession, bypass_confirm: bool = False) -> dict:
         """Permite que o gestor aceite ou recuse a solicitação de um funcionário."""
+        if not company:
+            await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
+            return {"status": "ok"}
+            
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem aceitar ou recusar funcionários.")
             return {"status": "ok"}
@@ -494,7 +714,13 @@ class CommandHandler:
             
         if not bypass_confirm:
             user.onboarding_step = f"CONFIRM_{action}_{target_user.phone}"
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"DB error: {e}")
+                await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                return {"status": "error"}
             
             action_pt = "aceitar" if action == "ACEITAR" else "recusar"
             await wuzapi_client.send_text_message(
@@ -507,7 +733,23 @@ class CommandHandler:
         if action == "ACEITAR":
             target_user.is_approved = True
             target_user.onboarding_step = None
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"DB error: {e}")
+                await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                return {"status": "error"}
+
+            await audit_service.log_action(
+                db=db,
+                company_id=user.company_id,
+                user_phone=user.phone,
+                action="APPROVE_USER",
+                entity_type="User",
+                entity_id=target_user.phone,
+                new_value="Approved"
+            )
 
             # Notifica o funcionário
             welcome_employee = (
@@ -524,7 +766,23 @@ class CommandHandler:
             target_user.company_id = None
             target_user.is_approved = False
             target_user.onboarding_step = None
-            await db.commit()
+            try:
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"DB error: {e}")
+                await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+                return {"status": "error"}
+
+            await audit_service.log_action(
+                db=db,
+                company_id=user.company_id,
+                user_phone=user.phone,
+                action="REJECT_USER",
+                entity_type="User",
+                entity_id=target_user.phone,
+                new_value="Rejected (Unlinked)"
+            )
 
             await wuzapi_client.send_text_message(target_user.phone, f"❌ Sua solicitação de vínculo com a empresa *{company.name}* foi recusada pelo gestor.")
             await wuzapi_client.send_text_message(phone, f"❌ Solicitação de *{target_user.name}* foi recusada.")
@@ -535,6 +793,10 @@ class CommandHandler:
         """Comando: LIMITE ALIMENTACAO 60"""
         from app.models import PolicyRule, ExpenseCategory
         
+        if not company:
+            await wuzapi_client.send_text_message(phone, "❌ Empresa não encontrada.")
+            return {"status": "ok"}
+            
         if user.role != UserRole.ADMIN:
             await wuzapi_client.send_text_message(phone, "❌ Apenas gestores podem configurar políticas.")
             return {"status": "ok"}
@@ -579,7 +841,23 @@ class CommandHandler:
             )
             db.add(rule)
 
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+
+        await audit_service.log_action(
+            db=db,
+            company_id=user.company_id,
+            user_phone=user.phone,
+            action="CHANGE_LIMIT",
+            entity_type="PolicyRule",
+            entity_id=rule.id,
+            new_value=str(max_amount)
+        )
         await wuzapi_client.send_text_message(phone, f"✅ **Política Atualizada!**\nO limite para `{category_enum.value}` agora é **R$ {max_amount:.2f}**.")
         return {"status": "ok"}
 
@@ -605,14 +883,27 @@ class CommandHandler:
         justification = parts[2].strip()
 
         # Validação de Política
-        is_valid, policy_reason = await policy_service.validate_expense(
+        # Buscar category_id padrão para "OUTROS"
+        cat_query = select(Category.id).where(Category.company_id == user.company_id, Category.name == "Outros")
+        cat_res = await db.execute(cat_query)
+        cat_id = cat_res.scalar_one_or_none()
+        
+        is_valid, policy_reason, auto_approve_below = await policy_service.validate_expense(
             company_id=user.company_id,
-            category=ExpenseCategory.OUTROS,
+            category_id=cat_id,
             amount=amount,
             has_receipt=False,
+            expense_date=date.today(),
             db=db
         )
 
+        final_status = ExpenseStatus.REJECTED
+        if is_valid:
+            if auto_approve_below > 0 and amount <= auto_approve_below:
+                final_status = ExpenseStatus.APPROVED
+            else:
+                final_status = ExpenseStatus.PENDING
+                
         expense_id = str(uuid.uuid4())
         new_expense = Expense(
             id=expense_id,
@@ -622,13 +913,19 @@ class CommandHandler:
             amount=amount,
             expense_date=date.today(),
             category=ExpenseCategory.OUTROS,
-            status=ExpenseStatus.PENDING if is_valid else ExpenseStatus.REJECTED,
+            status=final_status,
             rejection_reason=policy_reason if not is_valid else None,
             justification=justification,
             has_receipt=False
         )
         db.add(new_expense)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
 
         if is_valid:
             confirm_msg = (
@@ -693,7 +990,13 @@ class CommandHandler:
             has_receipt=False
         )
         db.add(new_expense)
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
 
         confirm_msg = (
             f"🚗 **KM Registrado!**\n\n"
@@ -712,6 +1015,164 @@ class CommandHandler:
             )
             await wuzapi_client.send_text_message(company.admin_phone, admin_alert)
 
+        return {"status": "ok"}
+
+    async def handle_cancelar_despesa(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        parts = clean_text.split()
+        if len(parts) < 2:
+            await wuzapi_client.send_text_message(phone, "❌ Para cancelar, informe o número da despesa. Ex: *CANCELAR 1*")
+            return {"status": "ok"}
+            
+        target_index_str = parts[1]
+        if not target_index_str.isdigit():
+            await wuzapi_client.send_text_message(phone, "❌ Número inválido.")
+            return {"status": "ok"}
+            
+        target_index = int(target_index_str) - 1
+        
+        # Buscar as PENDING do usuário
+        query = select(Expense).where(
+            Expense.user_phone == phone,
+            Expense.status == ExpenseStatus.PENDING
+        ).order_by(Expense.created_at.asc())
+        
+        res = await db.execute(query)
+        expenses = res.scalars().all()
+        
+        if target_index < 0 or target_index >= len(expenses):
+            await wuzapi_client.send_text_message(phone, f"❌ Despesa #{target_index_str} não encontrada entre as suas pendentes.")
+            return {"status": "ok"}
+            
+        target_expense = expenses[target_index]
+        target_expense.status = ExpenseStatus.CANCELLED
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+        
+        await wuzapi_client.send_text_message(phone, f"✅ Despesa de R$ {target_expense.amount:.2f} ({target_expense.merchant_name}) foi *CANCELADA*.")
+        
+        # Log Audit
+        from app.services.audit_service import audit_service
+        await audit_service.log_action(db, company.id, phone, "CANCEL_EXPENSE", "Expense", target_expense.id, "PENDING", "CANCELLED")
+        
+        return {"status": "ok"}
+
+    async def handle_reenviar_despesa(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        parts = clean_text.split()
+        if len(parts) < 2:
+            await wuzapi_client.send_text_message(phone, "❌ Para reenviar, informe o número da despesa. Ex: *REENVIAR 1*")
+            return {"status": "ok"}
+            
+        target_index_str = parts[1]
+        if not target_index_str.isdigit():
+            await wuzapi_client.send_text_message(phone, "❌ Número inválido.")
+            return {"status": "ok"}
+            
+        target_index = int(target_index_str) - 1
+        
+        # Buscar as REJECTED do usuário
+        query = select(Expense).where(
+            Expense.user_phone == phone,
+            Expense.status == ExpenseStatus.REJECTED
+        ).order_by(Expense.created_at.asc())
+        
+        res = await db.execute(query)
+        expenses = res.scalars().all()
+        
+        if target_index < 0 or target_index >= len(expenses):
+            await wuzapi_client.send_text_message(phone, f"❌ Despesa #{target_index_str} não encontrada entre as rejeitadas.")
+            return {"status": "ok"}
+            
+        old_expense = expenses[target_index]
+        
+        import uuid
+        # Cria uma cópia, mas como PENDING e ligada a anterior
+        new_expense = Expense(
+            id=str(uuid.uuid4()),
+            user_phone=phone,
+            company_id=user.company_id,
+            merchant_name=old_expense.merchant_name,
+            merchant_cnpj=old_expense.merchant_cnpj,
+            amount=old_expense.amount,
+            expense_date=old_expense.expense_date,
+            category=old_expense.category,
+            category_id=old_expense.category_id,
+            status=ExpenseStatus.PENDING,
+            image_s3_key=old_expense.image_s3_key,
+            receipt_url=old_expense.receipt_url,
+            has_receipt=old_expense.has_receipt,
+            parent_expense_id=old_expense.id,
+            justification=f"Reenvio da despesa rejeitada. Motivo original: {old_expense.rejection_reason}"
+        )
+        db.add(new_expense)
+        
+        # Marca a antiga como CANCELLED para sair da lista de REJECTED ativas
+        old_expense.status = ExpenseStatus.CANCELLED
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+        
+        await wuzapi_client.send_text_message(phone, f"✅ Despesa reenviada com sucesso para aprovação!")
+        
+        # Log Audit
+        from app.services.audit_service import audit_service
+        await audit_service.log_action(db, company.id, phone, "RESUBMIT_EXPENSE", "Expense", new_expense.id, None, f"parent={old_expense.id}")
+        
+        return {"status": "ok"}
+
+    async def handle_delegar(self, clean_text: str, phone: str, user: User, company: Company, db: AsyncSession) -> dict:
+        parts = clean_text.split()
+        if len(parts) < 3:
+            await wuzapi_client.send_text_message(phone, "❌ Para delegar suas aprovações, use: *DELEGAR [telefone] [dias]*\nExemplo: *DELEGAR 5511999999999 15*")
+            return {"status": "ok"}
+            
+        target_phone = parts[1].replace("+", "").replace("-", "").replace(" ", "")
+        
+        try:
+            days = int(parts[2])
+        except ValueError:
+            await wuzapi_client.send_text_message(phone, "❌ A quantidade de dias deve ser um número inteiro.")
+            return {"status": "ok"}
+            
+        if days <= 0 or days > 365:
+            await wuzapi_client.send_text_message(phone, "❌ A quantidade de dias deve estar entre 1 e 365.")
+            return {"status": "ok"}
+            
+        # Verifica se o delegado existe e é da mesma empresa
+        query = select(User).where(User.phone == target_phone, User.company_id == user.company_id)
+        res = await db.execute(query)
+        delegate = res.scalar_one_or_none()
+        
+        if not delegate:
+            await wuzapi_client.send_text_message(phone, "❌ Usuário não encontrado na sua empresa.")
+            return {"status": "ok"}
+            
+        from datetime import datetime, timedelta, timezone
+        user.delegated_to = delegate.phone
+        user.delegation_expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+        
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"DB error: {e}")
+            await wuzapi_client.send_text_message(phone, "❌ Ocorreu um erro interno. Tente novamente.")
+            return {"status": "error"}
+        
+        await wuzapi_client.send_text_message(phone, f"✅ Delegação ativada! Suas aprovações serão encaminhadas para {delegate.name or delegate.phone} pelos próximos {days} dias.")
+        
+        # Log Audit
+        from app.services.audit_service import audit_service
+        await audit_service.log_action(db, company.id, phone, "DELEGATE", "User", user.phone, None, f"to={delegate.phone}, days={days}")
+        
         return {"status": "ok"}
 
 command_handler = CommandHandler()

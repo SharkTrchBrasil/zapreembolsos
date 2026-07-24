@@ -11,12 +11,28 @@ class EfiPayService:
         self.client_secret = settings.EFI_CLIENT_SECRET
         self.pix_key = settings.EFI_PIX_KEY or "comercial@zapreembolso.com.br"
 
+    def _calculate_crc16(self, payload: str) -> str:
+        crc = 0xFFFF
+        for char in payload:
+            crc ^= ord(char) << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc = crc << 1
+                crc &= 0xFFFF
+        return f"{crc:04X}"
+
     async def create_pix_cob(self, company_name: str, cnpj_or_cpf: str, amount: float, description: str = "Assinatura ZapReembolso") -> Dict[str, Any]:
         """
         Gera uma cobrança Pix Imediata via API Efí Pay (Gerencianet).
         Caso as credenciais oficiais não estejam configuradas no .env,
         gera o payload estático estruturado padrão Pix Copia e Cola para homologação.
         """
+        digits_only = "".join(filter(str.isdigit, cnpj_or_cpf))
+        if len(digits_only) not in (11, 14):
+            raise ValueError("CNPJ ou CPF inválido.")
+
         amount_str = f"{amount:.2f}"
         txid = f"ZAP{uuid.uuid4().hex[:20].upper()}"
 
@@ -32,7 +48,9 @@ class EfiPayService:
                 logger.error(f"[Efí Pay] Erro ao conectar com API Efí: {e}. Usando fallback de payload Pix.")
 
         # Payload Pix Copia e Cola (BRCode padrão Banco Central)
-        pix_copia_cola = f"00020126580014BR.GOV.BCB.PIX0136{self.pix_key}520400005303986540{len(amount_str):02d}{amount_str}5802BR5916ZAPREEMBOLSO SAAS6009SAO PAULO62070503{txid[:7]}630489AB"
+        pix_copia_cola_base = f"00020126580014BR.GOV.BCB.PIX0136{self.pix_key}520400005303986540{len(amount_str):02d}{amount_str}5802BR5916ZAPREEMBOLSO SAAS6009SAO PAULO62070503{txid[:7]}6304"
+        crc = self._calculate_crc16(pix_copia_cola_base)
+        pix_copia_cola = pix_copia_cola_base + crc
 
         return {
             "txid": txid,

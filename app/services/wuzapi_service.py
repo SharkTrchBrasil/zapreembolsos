@@ -1,6 +1,7 @@
 import httpx
 import base64
 import logging
+import asyncio
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -21,8 +22,23 @@ class WuzAPIService:
 
     def get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=15.0)
+            self._client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=50, max_keepalive_connections=20))
         return self._client
+
+    async def _send_with_retry(self, method: str, url: str, **kwargs):
+        delays = [1, 2, 4]
+        for attempt in range(len(delays) + 1):
+            try:
+                response = await self.get_client().request(method, url, **kwargs)
+                if response.status_code >= 500:
+                    response.raise_for_status()
+                return response
+            except Exception as e:
+                if attempt < len(delays):
+                    logger.warning(f"Falha na requisição, tentando novamente em {delays[attempt]}s: {e}")
+                    await asyncio.sleep(delays[attempt])
+                else:
+                    raise
 
     async def send_text_message(self, phone: str, message: str) -> bool:
         """Envia mensagem de texto simples pelo WuzAPI."""
@@ -34,7 +50,7 @@ class WuzAPIService:
         logger.debug(f"Enviando para {url}")
         
         try:
-            response = await self.get_client().post(url, json=payload, headers=self.headers)
+            response = await self._send_with_retry("POST", url, json=payload, headers=self.headers)
             logger.info(f"Mensagem enviada para {phone} - Status: {response.status_code}")
             return response.status_code in [200, 201]
         except Exception as e:
@@ -52,7 +68,7 @@ class WuzAPIService:
         logger.debug(f"Enviando imagem para {phone}")
 
         try:
-            response = await self.get_client().post(url, json=payload, headers=self.headers)
+            response = await self._send_with_retry("POST", url, json=payload, headers=self.headers)
             logger.info(f"Imagem enviada para {phone} - Status: {response.status_code}")
             return response.status_code in [200, 201]
         except Exception as e:

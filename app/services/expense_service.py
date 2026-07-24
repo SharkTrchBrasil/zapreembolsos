@@ -1,6 +1,7 @@
 import uuid
 import base64
 import json
+import asyncio
 from datetime import datetime, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -34,14 +35,24 @@ class ExpenseService:
                 # Futuramente: parsed = await nfce_service.fetch_data_from_sefaz(nfce_url)
             
             # OCR Vision
-            parsed = await ocr_service.extract_receipt_from_image_base64(image_base64)
+            parsed = await asyncio.wait_for(ocr_service.extract_receipt_from_image_base64(image_base64), timeout=60.0)
             exp_date_obj = datetime.strptime(parsed.get("expense_date", date.today().strftime("%Y-%m-%d")), "%Y-%m-%d").date()
             
-            cat_str = str(parsed.get("category", "OUTROS")).upper()
-            try:
-                category_enum = ExpenseCategory[cat_str]
-            except KeyError:
-                category_enum = ExpenseCategory.OUTROS
+            cat_str = str(parsed.get("category", "Outros")).title()
+            from app.models import Category
+            cat_query = select(Category).where(
+                Category.company_id == user.company_id,
+                Category.name.ilike(f"%{cat_str}%")
+            )
+            cat_res = await db.execute(cat_query)
+            category = cat_res.scalars().first()
+            if not category:
+                cat_query = select(Category).where(Category.company_id == user.company_id, Category.name.ilike("%Outros%"))
+                category = (await db.execute(cat_query)).scalars().first()
+            
+            category_id = category.id if category else None
+            # Mantendo category_enum provisoriamente se a coluna 'category' enum ainda for not null
+            category_enum = ExpenseCategory.OUTROS
 
             amount = float(parsed.get("amount", 0.0))
             cnpj = parsed.get("merchant_cnpj")
@@ -68,19 +79,27 @@ class ExpenseService:
                     return {"status": "ok"}
 
             # Validação de Política
-            is_valid, policy_reason = await policy_service.validate_expense(
+            is_valid, policy_reason, auto_approve_below = await policy_service.validate_expense(
                 company_id=user.company_id,
-                category=category_enum,
+                category_id=category_id,
                 amount=amount,
                 has_receipt=True,
+                expense_date=exp_date_obj,
                 db=db
             )
+            
+            final_status = ExpenseStatus.REJECTED
+            if is_valid:
+                if auto_approve_below > 0 and amount <= auto_approve_below:
+                    final_status = ExpenseStatus.APPROVED
+                else:
+                    final_status = ExpenseStatus.PENDING
             
             # Salvar no S3
             expense_id = str(uuid.uuid4())
             file_name = f"{user.company_id}/{expense_id}.jpg"
-            s3_key = storage_service.upload_image(image_bytes, file_name)
-            presigned_url = storage_service.generate_presigned_url(s3_key)
+            s3_key = await storage_service.upload_image(image_bytes, file_name)
+            presigned_url = await storage_service.generate_presigned_url(s3_key)
 
             new_expense = Expense(
                 id=expense_id,
@@ -91,11 +110,12 @@ class ExpenseService:
                 amount=amount,
                 expense_date=exp_date_obj,
                 category=category_enum,
-                status=ExpenseStatus.PENDING if is_valid else ExpenseStatus.REJECTED,
+                category_id=category_id,
+                status=final_status,
                 rejection_reason=policy_reason if not is_valid else None,
                 image_s3_key=s3_key,
                 receipt_url=presigned_url,
-                ocr_confidence=parsed.get("confidence_score", 0.9), # Fake score if not returned
+                ocr_confidence=parsed.get("confidence_score", 0.9),
                 ocr_raw_data=json.dumps(parsed),
                 nfce_access_key=access_key,
                 is_duplicate_suspect=is_duplicate,
@@ -105,37 +125,59 @@ class ExpenseService:
             await db.commit()
 
             msg_duplicate = "\n⚠️ *Aviso: Parece que este comprovante já foi enviado anteriormente.*" if is_duplicate else ""
+            
+            status_text = f"Pendente de Aprovação do Gestor ({company.name})."
+            if new_expense.status == ExpenseStatus.APPROVED:
+                status_text = "✅ *Aprovada Automaticamente* (dentro da política)."
+                
             confirm_msg = (
                 f"✅ *Comprovante Registrado!*\n\n"
                 f"🏢 *Local:* {new_expense.merchant_name}\n"
                 f"💰 *Valor:* R$ {new_expense.amount:.2f}\n"
                 f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"
-                f"🏷️ *Categoria:* {category_enum.value}\n\n"
-                f"📋 _Status:_ Pendente de Aprovação do Gestor ({company.name}).{msg_duplicate}"
+                f"🏷️ *Categoria:* {category_enum.value if category_enum else (category.name if category else 'Outros')}\n\n"
+                f"📋 _Status:_ {status_text}{msg_duplicate}"
             )
             await wuzapi_client.send_text_message(phone, confirm_msg)
 
             # Notifica o Gestor (se estiver pendente)
-            if new_expense.status == ExpenseStatus.PENDING and company and company.admin_phone and company.admin_phone != phone:
-                receipt_url = storage_service.generate_presigned_url(s3_key)
+            if new_expense.status == ExpenseStatus.PENDING:
+                # Descobrir quem é o aprovador
+                approver_phone = company.admin_phone if company else None
                 
-                # Monta detalhes ricos do funcionário
-                user_desc = user.name or phone
-                if user.job_title or user.department:
-                    user_desc += f" ({user.job_title or 'Funcionário'} - {user.department or 'Geral'})"
+                if user.department_id:
+                    from app.models import UserRoleModel, Role
+                    approver_query = (
+                        select(UserRoleModel.user_phone)
+                        .join(Role, Role.id == UserRoleModel.role_id)
+                        .where(Role.name == "APROVADOR_DEPTO")
+                        .where(UserRoleModel.department_id == user.department_id)
+                    )
+                    approver_res = await db.execute(approver_query)
+                    dept_approver_phone = approver_res.scalars().first()
+                    if dept_approver_phone:
+                        approver_phone = dept_approver_phone
+                        
+                if approver_phone and approver_phone != phone:
+                    receipt_url = await storage_service.generate_presigned_url(s3_key)
+                    
+                    # Monta detalhes ricos do funcionário
+                    user_desc = user.name or phone
+                    if user.job_title or user.department:
+                        user_desc += f" ({user.job_title or 'Funcionário'} - {user.department or 'Geral'})"
 
-                caption = (
-                    f"📥 Nova despesa enviada por *{user_desc}*:\n\n"
-                    f"🏢 *Local:* {new_expense.merchant_name}\n"
-                    f"💰 *Valor:* R$ {new_expense.amount:.2f} ({category_enum.value})\n"
-                    f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"
-                    f"{'⚠️ *Alerta: Possível Despesa Duplicada!*' if is_duplicate else ''}\n"
-                    f"----------------------------------\n"
-                    f"Responda este chat para decidir:\n"
-                    f"✅ Responda *1* (ou *APROVAR*)\n"
-                    f"❌ Responda *2* (ou *REJEITAR [motivo]*)"
-                )
-                await wuzapi_client.send_image_message(company.admin_phone, receipt_url, caption)
+                    caption = (
+                        f"📥 Nova despesa enviada por *{user_desc}*:\n\n"
+                        f"🏢 *Local:* {new_expense.merchant_name}\n"
+                        f"💰 *Valor:* R$ {new_expense.amount:.2f} ({category_enum.value})\n"
+                        f"📅 *Data:* {exp_date_obj.strftime('%d/%m/%Y')}\n"
+                        f"{'⚠️ *Alerta: Possível Despesa Duplicada!*' if is_duplicate else ''}\n"
+                        f"----------------------------------\n"
+                        f"Responda este chat para decidir:\n"
+                        f"✅ Responda *1* (ou *APROVAR*)\n"
+                        f"❌ Responda *2* (ou *REJEITAR [motivo]*)"
+                    )
+                    await wuzapi_client.send_image_message(approver_phone, receipt_url, caption)
             elif new_expense.status == ExpenseStatus.REJECTED:
                 # Notifica o usuário sobre a política
                 await wuzapi_client.send_text_message(
@@ -143,6 +185,12 @@ class ExpenseService:
                     f"❌ Sua despesa foi **REJEITADA AUTOMATICAMENTE** pelas políticas da empresa.\nMotivo: {policy_reason}"
                 )
 
+        except asyncio.TimeoutError:
+            print("[Process Error] Timeout ao tentar ler o recibo.")
+            await wuzapi_client.send_text_message(
+                phone, 
+                "⏳ O tempo de processamento esgotou. O serviço está congestionado, por favor tente enviar novamente em alguns minutos."
+            )
         except Exception as e:
             print(f"[Process Error] Erro ao processar recibo: {e}")
             await wuzapi_client.send_text_message(
